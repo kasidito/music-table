@@ -6,7 +6,7 @@
     settings: [{ id: 1, open_time: '18:00:00', close_time: '02:00:00', default_duration_min: 120 }],
     layouts: [{ id: 'L1', name: 'Normal', is_default: true, created_at: '2026-01-01' }],
     tables: [
-      { id: 'T1', layout_id: 'L1', floor: 1, label: 'T1', seats: 4, shape: 'square', x: 150, y: 150, archived: false },
+      { id: 'T1', layout_id: 'L1', floor: 1, label: 'T1', seats: 4, shape: 'square', x: 150, y: 150, archived: false, color: '#D7261E', price: 3300 },
       { id: 'T2', layout_id: 'L1', floor: 1, label: 'T2', seats: 2, shape: 'round', x: 400, y: 150, archived: false },
       { id: 'T3', layout_id: 'L1', floor: 2, label: 'VIP', seats: 8, shape: 'square', x: 300, y: 300, w: 128, h: 64, archived: false },
       { id: 'F1', layout_id: 'L1', floor: 1, kind: 'stage', label: 'STAGE', seats: 0, shape: 'square', x: 300, y: 450, w: 300, h: 150, archived: false },
@@ -53,7 +53,7 @@
       if (this.op === 'insert') {
         const r = { id: uid(), ...this.payload };
         if (this.t === 'bookings') {
-          Object.assign(r, { status: r.status ?? 'booked', is_walk_in: !!r.is_walk_in, note: r.note ?? '', phone: r.phone ?? '',
+          Object.assign(r, { paid: false, paid_at: null, paid_by: null, slip_path: null, status: r.status ?? 'booked', is_walk_in: !!r.is_walk_in, note: r.note ?? '', phone: r.phone ?? '',
             guest_name: r.guest_name ?? '', night: nightOf(r.start_at), created_by: session.user.id, updated_by: session.user.id });
           logHistory(null, r);
         }
@@ -65,7 +65,11 @@
         for (const r of out) {
           const old = { ...r };
           Object.assign(r, this.payload);
-          if (this.t === 'bookings') { r.night = nightOf(r.start_at); r.updated_by = session.user.id; logHistory(old, r); }
+          if (this.t === 'bookings') {
+            r.night = nightOf(r.start_at); r.updated_by = session.user.id;
+            if (r.paid !== old.paid) { r.paid_at = r.paid ? now() : null; r.paid_by = r.paid ? session.user.id : null; }
+            logHistory(old, r);
+          }
         }
       } else if (this.op === 'delete') {
         out = rows.filter((r) => this.filters.every((f) => f(r)));
@@ -128,6 +132,15 @@
         db.profiles.push({ id: uid(), email: body.email, display_name: body.display_name, role: body.role, active: true, created_at: now() });
         return { data: { id: 'x' }, error: null };
       },
+    },
+    storage: {
+      from: () => ({
+        async upload(path, blob) { (window.__slips ||= {})[path] = blob; return { data: { path }, error: null }; },
+        async createSignedUrl(path) {
+          const blob = window.__slips?.[path];
+          return blob ? { data: { signedUrl: URL.createObjectURL(blob) }, error: null } : { data: null, error: { message: 'not found' } };
+        },
+      }),
     },
     channel() { return { on() { return this; }, subscribe() { return this; } }; },
     removeChannel() {},

@@ -25,6 +25,7 @@ const ICON = {
   cal: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   clock: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>',
+  camera: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
   warn: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
 };
 
@@ -51,6 +52,11 @@ const tablesOf = (layoutId, floor) =>
 const personName = (id) => S.profiles.find((p) => p.id === id)?.display_name ?? '—';
 const isTonight = () => S.night === T.nightOf(Date.now(), S.settings);
 const hhmm = (iso) => T.bkkParts(Date.parse(iso)).hhmm;
+const baht = (n) => `${Number(n).toLocaleString('en-US')}฿`;
+const priceOf = (b) => tableById(b.table_id)?.price ?? null;
+const needsPayment = (b) => priceOf(b) != null && b.status !== 'cancelled' && b.status !== 'no_show';
+const payPill = (b) => (b.paid ? `<span class="pill paid">${t('paid')}</span>`
+  : needsPayment(b) ? `<span class="pill unpaid">${t('unpaid')}</span>` : '');
 const tableLabel = (id) => { const x = tableById(id); return x ? `${x.label} · ${t('floor')} ${x.floor}` : '—'; };
 
 function atMs() {
@@ -250,10 +256,12 @@ function statsRow() {
   const total = tablesOf(nightLayoutId()).length;
   const seated = S.bookings.filter((b) => b.status === 'seated').length;
   const late = isTonight() ? S.bookings.filter((b) => T.isLate(b, now)).length : 0;
+  const unpaid = S.bookings.filter((b) => needsPayment(b) && !b.paid).length;
   return `<div class="stats-row">
     <span class="chip"><b>${T.tablesBooked(S.bookings)}</b>/${total} ${t('tables_booked')}</span>
     <span class="chip"><b class="c-seated">${seated}</b> ${t('seated_now')}</span>
     ${late ? `<span class="chip late"><b>${late}</b> ${t('late')}</span>` : ''}
+    ${unpaid ? `<button class="chip unpaid" data-action="view" data-v="list"><b>${unpaid}</b> ${t('unpaid')}</button>` : ''}
   </div>`;
 }
 
@@ -297,12 +305,22 @@ function tableSvg(tb, cls, lines) {
   const text = shown.filter(Boolean).map((l, i, a) =>
     `<text x="${tb.x}" y="${tb.y + (i - (a.length - 1) / 2) * fs * 1.15}" class="${i === 0 ? 'tl' : 'ts'}" font-size="${i === 0 ? fs : fs * 0.72}">${esc(l)}</text>`).join('');
   const kind = isTable(tb) ? 'tbl' : `tbl fx fx-${tb.kind}`;
-  const extra = tb.kind === 'speaker' ? `<circle cx="${tb.x}" cy="${tb.y}" r="${Math.min(w, h) / 5}" class="cone"/>` : '';
-  return `<g class="${kind} ${cls}" ${isTable(tb) || cls.includes('edit') ? `data-tid="${tb.id}"` : ''}>${shape}${extra}${text}</g>`;
+  let extra = tb.kind === 'speaker' ? `<circle cx="${tb.x}" cy="${tb.y}" r="${Math.min(w, h) / 5}" class="cone"/>` : '';
+  const tier = isTable(tb) && tb.color;
+  if (tier) {
+    const r = Math.max(6, Math.min(w, h) * 0.13);
+    const cx = tb.shape === 'round' ? tb.x + w * 0.33 : tb.x + w / 2 - r - 3;
+    const cy = tb.shape === 'round' ? tb.y - h * 0.33 : tb.y - h / 2 + r + 3;
+    extra += `<circle class="tier-dot" cx="${cx}" cy="${cy}" r="${r}" fill="${tb.color}"/>`;
+  }
+  const style = tier && cls.includes('st-free') ? ` style="--tier:${tb.color}"` : '';
+  return `<g class="${kind} ${cls}${tier ? ' tiered' : ''}"${style} ${isTable(tb) || cls.includes('edit') ? `data-tid="${tb.id}"` : ''}>${shape}${extra}${text}</g>`;
 }
+const TIER_COLORS = [['#D7261E', 'c_red'], ['#1FA448', 'c_green'], ['#5DADE2', 'c_blue'], ['#F5B800', 'c_yellow'], ['#4B35A8', 'c_purple'], ['#3A3A3F', 'c_black']];
 const FIXTURES = {
   stage: [240, 140, 'square'], bar: [40, 240, 'square'], speaker: [44, 44, 'square'], door: [20, 80, 'square'],
   stairs: [80, 100, 'square'], restroom: [100, 80, 'square'], dj: [100, 60, 'square'], wall: [200, 12, 'square'],
+  sofa: [60, 180, 'square'], zone: [120, 90, 'square'],
 };
 async function addItem(kind) {
   const existing = tablesOf(S.editLayoutId);
@@ -364,7 +382,7 @@ function upcomingRow(b) {
   return `<div class="up-row ${late ? 'late' : ''}">
     <button class="up-main" data-action="open-booking" data-id="${b.id}">
       <span class="time">${hhmm(b.start_at)}</span>
-      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tableById(b.table_id)?.label ?? '')}</b>
+      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tableById(b.table_id)?.label ?? '')} ${needsPayment(b) && !b.paid ? `<span class="pill unpaid">${t('unpaid')}</span>` : ''}</b>
         <span class="small-text">${late ? t('late_by').replace('{n}', Math.round((Date.now() - T.startMs(b)) / 60000)) + ' · ' : ''}${b.party_size} ${t('people')}${b.note ? ' · ' + esc(b.note) : ''}</span></span>
     </button>
     ${isTonight() ? `<button class="${late ? 'primary' : 'ghost'} small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button>` : ''}
@@ -394,12 +412,23 @@ function viewMap() {
       <span><i class="dot seated"></i>${t('st_seated')}</span>
       <span><i class="dot late"></i>${t('late')}</span>
     </div>
+    ${tierLegend()}
     <div class="phone-only upcoming">
       <div class="sec-title">${t('arriving')}</div>
       ${up.length ? up.slice(0, 3).map(upcomingRow).join('') : `<p class="muted small-text">${t('no_arrivals')}</p>`}
       ${up.length > 3 ? `<button class="ghost small" data-action="view" data-v="list">${t('see_all')} (${up.length})</button>` : ''}
     </div>
   </section>`;
+}
+
+function tierLegend() {
+  const tiers = new Map();
+  for (const tb of tablesOf(nightLayoutId(), S.floor)) {
+    if (tb.color && tb.price != null) tiers.set(tb.color + tb.price, tb);
+  }
+  if (!tiers.size) return '';
+  return `<div class="tiers">${[...tiers.values()].sort((a, b) => b.price - a.price).map((tb) =>
+    `<span class="tier"><i style="background:${tb.color}"></i><b>${baht(tb.price)}</b> ${t('max_pax').replace('{n}', tb.seats)}</span>`).join('')}</div>`;
 }
 
 function viewAside() {
@@ -434,7 +463,7 @@ function bookingRow(b) {
     <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong>
       <span class="muted small-text"> ${esc(tableLabel(b.table_id))} · ${ICON.person} ${b.party_size}</span>
       ${b.note ? `<span class="muted small-text note">${esc(b.note)}</span>` : ''}</span>
-    <span class="pill st-${st}">${st === 'late' ? t('late') : t('st_' + b.status)}</span>
+    <span class="pills">${payPill(b)}<span class="pill st-${st}">${st === 'late' ? t('late') : t('st_' + b.status)}</span></span>
   </button>`;
 }
 
@@ -500,6 +529,11 @@ function viewLayouts() {
       <div class="grid2">
         <label>${t('table_name')}<input name="label" value="${esc(sel.label)}" required maxlength="20"></label>
         ${isTable(sel) ? `<label>${t('seats')}<input name="seats" type="number" min="1" max="50" value="${sel.seats}" required></label>` : `<input type="hidden" name="seats" value="0">`}
+        ${isTable(sel) ? `<label>${t('tier_color')}<select name="color">
+          <option value="">${t('none')}</option>
+          ${TIER_COLORS.map(([c, k]) => `<option value="${c}" ${sel.color === c ? 'selected' : ''}>${t(k)}</option>`).join('')}
+        </select></label>
+        <label>${t('price')}<input name="price" type="number" min="0" step="100" inputmode="numeric" value="${sel.price ?? ''}" placeholder="—"></label>` : ''}
         <label>${t('width')}<input name="w" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).w}" required></label>
         <label>${t('height')}<input name="h" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).h}" required></label>
         <label>${t('shape')}<select name="shape">
@@ -567,7 +601,7 @@ function openTable(id) {
   const ms = atMs();
   const list = S.bookings.filter((b) => b.table_id === id);
   const free = isTonight() && T.tableStateAt(id, S.bookings, Date.now()).state === 'free';
-  openModal(`<h2>${esc(tb.label)} <span class="muted small-text">${t('floor')} ${tb.floor} · ${tb.seats} ${t('seats_short')}</span></h2>
+  openModal(`<h2>${esc(tb.label)} <span class="muted small-text">${t('floor')} ${tb.floor} · ${tb.seats} ${t('seats_short')}${tb.price != null ? ' · ' + baht(tb.price) : ''}</span></h2>
     <div class="list">${list.length ? list.map(bookingRow).join('') : `<p class="empty">${t('no_bookings')}</p>`}</div>
     <div class="row wrap">
       <button class="primary" data-action="new-booking" data-table="${id}">${ICON.plus} ${t('new_booking')}</button>
@@ -597,7 +631,7 @@ function bookingForm(b, opts = {}) {
           `<option ${x === time ? 'selected' : ''}>${x}</option>`).join('')}</select></label>`}
         <label>${t('duration_min')}<input name="duration_min" type="number" min="15" max="720" step="15" value="${b?.duration_min ?? S.settings.default_duration_min}" required></label>
         <label>${t('table')}<select name="table_id">${tables.map((x) =>
-          `<option value="${x.id}" ${x.id === tableId ? 'selected' : ''}>${esc(x.label)} · ${t('floor')} ${x.floor} · ${x.seats} ${t('seats_short')}</option>`).join('')}</select></label>
+          `<option value="${x.id}" ${x.id === tableId ? 'selected' : ''}>${esc(x.label)} · ${t('floor')} ${x.floor} · ${x.seats} ${t('seats_short')}${x.price != null ? ' · ' + baht(x.price) : ''}</option>`).join('')}</select></label>
       </div>
       <label>${t('note')}<textarea name="note" rows="2" maxlength="500">${esc(b?.note)}</textarea></label>
       <div id="warnings"></div>
@@ -663,6 +697,7 @@ async function openBooking(id) {
       <dt>${t('created_by')}</dt><dd>${esc(personName(b.created_by))}</dd>
       <dt>${t('updated_by')}</dt><dd>${esc(personName(b.updated_by))}</dd>
     </dl>
+    ${paymentSection(b)}
     <div class="row wrap">
       ${next.map((s) => `<button class="${s === 'seated' || s === 'done' ? 'primary' : s === 'cancelled' || s === 'no_show' ? 'ghost danger' : ''}" data-action="set-status" data-id="${b.id}" data-s="${s}">${label[s]}</button>`).join('')}
       ${T.isActive(b) ? `<button class="ghost" data-action="edit-booking" data-id="${b.id}">${t('edit')}</button>` : ''}
@@ -674,13 +709,87 @@ async function openBooking(id) {
     const el = $('#history');
     if (el) el.innerHTML = rows.map(historyRow).join('') || '—';
   } catch (e) { toast(errMsg(e), true); }
+  loadSlip(b);
 }
 
-const FIELDS = ['status', 'table_id', 'start_at', 'duration_min', 'party_size', 'guest_name', 'phone', 'note'];
+function paymentSection(b) {
+  const price = priceOf(b);
+  if (price == null && !b.paid && !b.slip_path) {
+    return `<div class="pay-box quiet"><span class="muted small-text">${t('payment')}</span>
+      <button class="ghost small" data-action="mark-paid" data-id="${b.id}">${t('mark_paid')}</button></div>`;
+  }
+  return `<div class="pay-box ${b.paid ? 'is-paid' : 'is-unpaid'}">
+    <div class="row between wrap">
+      <div><div class="muted small-text">${t('payment')}${price != null ? ` · ${t('amount_due')}` : ''}</div>
+        <div class="pay-amount">${price != null ? baht(price) : '—'} ${b.paid ? `<span class="pill paid">${t('paid')}</span>` : `<span class="pill unpaid">${t('unpaid')}</span>`}</div>
+        ${b.paid && b.paid_at ? `<div class="muted small-text">${t('paid_by')} ${esc(personName(b.paid_by))} · ${T.bkkParts(Date.parse(b.paid_at)).date} ${T.bkkParts(Date.parse(b.paid_at)).hhmm}</div>` : ''}
+      </div>
+      <div class="row wrap">
+        <label class="btn-file ${b.paid ? '' : 'primary'}">${ICON.camera}<span>${b.slip_path ? t('replace_slip') : t('attach_slip')}</span>
+          <input type="file" accept="image/*" data-change="slip" data-id="${b.id}"></label>
+        ${b.paid ? `<button class="ghost small danger" data-action="mark-unpaid" data-id="${b.id}">${t('mark_unpaid')}</button>`
+          : `<button class="ghost small" data-action="mark-paid" data-id="${b.id}">${t('mark_paid_no_slip')}</button>`}
+      </div>
+    </div>
+    ${b.slip_path ? `<a id="slip-link" class="slip" target="_blank" rel="noopener"><img id="slip-img" alt="${t('slip')}"></a>` : ''}
+  </div>`;
+}
+
+async function loadSlip(b) {
+  if (!b.slip_path) return;
+  try {
+    const { data, error } = await sb.storage.from('slips').createSignedUrl(b.slip_path, 3600);
+    if (error) throw error;
+    const img = $('#slip-img'), link = $('#slip-link');
+    if (img) { img.src = data.signedUrl; link.href = data.signedUrl; }
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+// Shrink a photo to at most 1600px JPEG so uploads stay small on mobile data.
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('image'))), 'image/jpeg', 0.8);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(t('err_image'))); };
+    img.src = url;
+  });
+}
+
+async function uploadSlip(bookingId, file) {
+  toast(t('uploading'));
+  try {
+    const blob = await compressImage(file);
+    const path = `${bookingId}/slip-${Date.now()}.jpg`;
+    const { error } = await sb.storage.from('slips').upload(path, blob, { contentType: 'image/jpeg' });
+    if (error) throw error;
+    await run(sb.from('bookings').update({ paid: true, slip_path: path }).eq('id', bookingId));
+    toast(t('saved'));
+    await loadNight(); render(); openBooking(bookingId);
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+async function setPaid(id, paid) {
+  try {
+    await run(sb.from('bookings').update({ paid }).eq('id', id));
+    toast(t('saved')); await loadNight(); render(); openBooking(id);
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+const FIELDS = ['status', 'paid', 'slip_path', 'table_id', 'start_at', 'duration_min', 'party_size', 'guest_name', 'phone', 'note'];
 function fmtField(k, v) {
   if (k === 'status') return t('st_' + v);
   if (k === 'table_id') return tableById(v)?.label ?? '—';
   if (k === 'start_at') return hhmm(v);
+  if (k === 'paid') return v ? t('paid') : t('unpaid');
+  if (k === 'slip_path') return v ? t('slip') : '—';
   return v === '' || v == null ? '—' : String(v);
 }
 function historyRow(h) {
@@ -735,6 +844,8 @@ const actions = {
   async 'night-today'() { await goNight(T.nightOf(Date.now(), S.settings)); },
   'close-modal'() { closeModal(); },
   more() { moreSheet(); },
+  'mark-paid'(el) { return setPaid(el.dataset.id, true); },
+  'mark-unpaid'(el) { if (confirm(t('confirm_unpaid'))) return setPaid(el.dataset.id, false); },
   async 'go-night'(el) { await goNight(el.dataset.d); },
   'at-now'() { S.at = 'now'; render(); },
   unselect() { S.selTable = null; render(); },
@@ -812,6 +923,7 @@ document.addEventListener('click', (e) => {
 const changes = {
   async night(el) { if (el.value) await goNight(el.value); },
   at(el) { S.at = el.value; render(); },
+  slip(el) { const f = el.files?.[0]; if (f) uploadSlip(el.dataset.id, f); },
   'night-layout'(el) { changeNightLayout(el.value); },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
   'edit-layout'(el) { S.editLayoutId = el.value; S.selTable = null; render(); },
@@ -848,7 +960,8 @@ const forms = {
   async table(f) {
     const v = Object.fromEntries(new FormData(f));
     try {
-      await run(sb.from('tables').update({ label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h) }).eq('id', v.id));
+      await run(sb.from('tables').update({ label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h),
+        ...('color' in v ? { color: v.color || null, price: v.price === '' ? null : Number(v.price) } : {}) }).eq('id', v.id));
       S.editFloor = Number(v.floor); toast(t('saved')); await reload();
     } catch (e) { toast(errMsg(e), true); }
   },

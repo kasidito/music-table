@@ -185,8 +185,12 @@ svg.editor { touch-action: none; }
 .tbl.st-seated text { fill: var(--seated-text); }
 .tbl.st-late :is(rect, ellipse) { fill: var(--late-bg); stroke: var(--late); stroke-dasharray: 6 4; }
 .tbl.st-booked .ts, .tbl.st-late .ts { fill: var(--text); }
+.tbl.tiered.st-free :is(rect, ellipse) { stroke: var(--tier, #4a3f37); stroke-width: 3.5; }
+.tier-dot { stroke: var(--bg); stroke-width: 2; }
 .tbl.sel :is(rect, ellipse) { stroke: var(--accent); stroke-width: 5; }
-.editor .tbl.sel :is(rect, ellipse) { stroke-dasharray: 8 5; }
+.editor .tbl.tiered.st-free :is(rect, ellipse) { stroke: var(--tier, #4a3f37); stroke-width: 3.5; }
+.tier-dot { stroke: var(--bg); stroke-width: 2; }
+.tbl.sel :is(rect, ellipse) { stroke-dasharray: 8 5; }
 .fx { cursor: default; }
 .fx :is(rect, ellipse) { fill: #262019; stroke: var(--line); stroke-width: 2; }
 .fx-bar rect { fill: #3d3218; }
@@ -197,6 +201,8 @@ svg.editor { touch-action: none; }
 .fx-stairs rect { fill: #2a2420; stroke-dasharray: 2 6; }
 .fx-dj rect { fill: #2b2236; }
 .fx-restroom rect { fill: #1d2629; }
+.fx-sofa rect { fill: #2a2140; stroke: #3d3260; }
+.fx-zone rect { fill: transparent; stroke: var(--muted); stroke-dasharray: 6 4; }
 .fx text { fill: var(--muted); letter-spacing: .08em; }
 .editor .fx { cursor: grab; }
 
@@ -206,6 +212,32 @@ svg.editor { touch-action: none; }
 .dot.booked { background: var(--booked-bg); border-color: var(--booked); }
 .dot.seated { background: var(--seated); border-color: var(--seated); }
 .dot.late { background: var(--late-bg); border: 2px dashed var(--late); }
+
+/* Price tiers */
+.tiers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.tier { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.tier i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 1px solid rgba(255,255,255,.35); }
+.tier b { color: var(--text); }
+
+/* Payment */
+.pills { display: inline-flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.pill.paid { border-color: var(--done); color: var(--done); }
+.pill.unpaid { border: 1px solid #c98a2e; color: #ffc46b; background: #3a2c16; }
+.up-main .pill { font-size: 11px; padding: 0 6px; margin-left: 4px; vertical-align: 1px; }
+.chip.unpaid { min-height: 0; padding: 5px 12px; border-color: #c98a2e; background: #3a2c16; color: #ffd9a0; font-size: 13px; }
+.chip.unpaid b { color: #ffc46b; }
+.pay-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.pay-box.quiet { flex-direction: row; align-items: center; justify-content: space-between; }
+.pay-box.is-unpaid { border-color: #c98a2e; background: #261d10; }
+.pay-box.is-paid { border-color: #3f6b4a; background: #16201a; }
+.pay-amount { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.btn-file {
+  position: relative; display: inline-flex; flex-direction: row; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
+  border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface2); color: var(--text); font-size: 15px; cursor: pointer; overflow: hidden;
+}
+.btn-file.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.btn-file input { position: absolute; inset: 0; opacity: 0; min-height: 0; cursor: pointer; }
+.slip img { display: block; width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; background: #000; }
 
 /* Arriving next */
 .upcoming { margin-top: 6px; }

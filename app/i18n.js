@@ -1,5 +1,9 @@
 const DICT = {
   th: {
+    paid: 'จ่ายแล้ว', unpaid: 'ค้างจ่าย', payment: 'การชำระเงิน', amount_due: 'ยอดที่ต้องจ่าย', paid_by: 'บันทึกโดย', attach_slip: 'แนบสลิป', replace_slip: 'เปลี่ยนสลิป',
+    mark_paid: 'บันทึกว่าจ่ายแล้ว', mark_paid_no_slip: 'จ่ายแล้ว (ไม่มีสลิป)', mark_unpaid: 'ยกเลิกสถานะจ่าย', confirm_unpaid: 'เปลี่ยนเป็นค้างจ่าย?', slip: 'สลิปโอนเงิน',
+    uploading: 'กำลังอัปโหลดสลิป…', err_image: 'เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่', max_pax: 'สูงสุด {n} คน', tier_color: 'สีโซน', price: 'ราคา (บาท)', none: 'ไม่มี',
+    c_red: 'แดง', c_green: 'เขียว', c_blue: 'ฟ้า', c_yellow: 'เหลือง', c_purple: 'ม่วง', c_black: 'ดำ', fx_sofa: 'โซฟา', fx_zone: 'พื้นที่',
     menu: 'เมนู', bookings_word: 'การจอง', more: 'เพิ่มเติม', language: 'ภาษา', pick_date: 'เลือกวันที่', tables_booked: 'โต๊ะที่จอง', seated_now: 'นั่งอยู่',
     late: 'มาช้า', late_by: 'ช้า {n} นาที', people: 'คน', arrived: 'มาแล้ว', arriving: 'กำลังจะมา', no_arrivals: 'ไม่มีลูกค้าที่กำลังจะมา', see_all: 'ดูทั้งหมด',
     loading: 'กำลังโหลด…', login_hint: 'เข้าสู่ระบบด้วยบัญชีพนักงาน', email: 'อีเมล', password: 'รหัสผ่าน', login: 'เข้าสู่ระบบ',
@@ -42,6 +46,10 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    paid: 'Paid', unpaid: 'Unpaid', payment: 'Payment', amount_due: 'amount due', paid_by: 'Marked by', attach_slip: 'Attach slip', replace_slip: 'Replace slip',
+    mark_paid: 'Mark as paid', mark_paid_no_slip: 'Paid (no slip)', mark_unpaid: 'Mark unpaid', confirm_unpaid: 'Change to unpaid?', slip: 'Transfer slip',
+    uploading: 'Uploading slip…', err_image: "Couldn't open this photo. Try again.", max_pax: 'max {n}', tier_color: 'Zone color', price: 'Price (THB)', none: 'None',
+    c_red: 'Red', c_green: 'Green', c_blue: 'Blue', c_yellow: 'Yellow', c_purple: 'Purple', c_black: 'Black', fx_sofa: 'Sofa', fx_zone: 'Area',
     menu: 'Menu', bookings_word: 'bookings', more: 'More', language: 'Language', pick_date: 'Pick a date', tables_booked: 'tables booked', seated_now: 'Seated',
     late: 'Late', late_by: '{n} min late', people: 'guests', arrived: 'Arrived', arriving: 'Arriving next', no_arrivals: 'No one else expected', see_all: 'See all',
     loading: 'Loading…', login_hint: 'Sign in with your staff account', email: 'Email', password: 'Password', login: 'Sign in',

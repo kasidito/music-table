@@ -150,6 +150,25 @@ try {
   assert.equal(d.bookings.find((b) => b.guest_name === 'สมชาย').status, 'done');
   step('status changes and history with who/before/after');
 
+  // Payment: unpaid pill on priced table, attach slip photo -> paid with who/when, image shown
+  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.unpaid').count(), 'priced booking shows unpaid');
+  await page.click('.brow:has-text("สมชาย")');
+  await page.waitForSelector('#modal .pay-box.is-unpaid');
+  assert.match(await page.textContent('#modal .pay-box'), /3,300฿/);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.setInputFiles('#modal input[data-change=slip]', { name: 'slip.png', mimeType: 'image/png', buffer: png });
+  await page.waitForSelector('#modal .pay-box.is-paid');
+  await page.waitForFunction(() => document.querySelector('#slip-img')?.src.startsWith('blob:'));
+  d = await db();
+  const ov = d.bookings.find((b) => b.guest_name === 'สมชาย');
+  assert.ok(ov.paid && ov.paid_by === 'U1' && /^[\w-]+\/slip-\d+\.jpg$/.test(ov.slip_path), 'paid with slip path');
+  await shot('05b-paid-slip');
+  await page.waitForSelector('#history .hrow');
+  assert.match(await page.textContent('#history'), /ค้างจ่าย → จ่ายแล้ว/);
+  await page.click('#modal [data-action=close-modal]');
+  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.paid').count());
+  step('payment: unpaid shown, slip photo upload marks paid, history records it');
+
   // Edit booking
   await page.click('.brow:has-text("Late")');
   await page.click('[data-action=edit-booking]');
