@@ -50,7 +50,10 @@ try {
   await page.waitForSelector('svg.floor');
   assert.equal(await page.locator('svg.floor [data-tid]').count(), 2, 'floor 1 has 2 tables');
   for (const tab of ['แก้ผัง', 'พนักงาน', 'ตั้งค่า']) assert.ok(await page.locator('.tab', { hasText: tab }).count());
-  step('manager logs in, sees floor 1 and manager tabs');
+  assert.equal(await page.locator('svg.floor .fx-stage').count(), 1, 'stage drawn');
+  await page.click('svg.floor .fx-stage');
+  assert.ok(await page.locator('#modal').isHidden(), 'stage is not bookable');
+  step('manager logs in, sees floor 1 with stage and manager tabs');
 
   // New booking from a table
   await page.click('svg.floor [data-tid=T1]');
@@ -157,7 +160,7 @@ try {
   await page.click('[data-action=table-add]');
   await page.waitForSelector('form[data-form=table]');
   d = await db();
-  const added = d.tables.find((x) => x.layout_id === 'L1' && !['T1', 'T2', 'T3'].includes(x.id));
+  const added = d.tables.find((x) => x.layout_id === 'L1' && !['T1', 'T2', 'T3', 'F1'].includes(x.id));
   assert.equal(added?.label, 'T4', 'new table gets next free name');
   const box = await page.locator(`#editor-svg [data-tid="${added.id}"]`).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -168,7 +171,6 @@ try {
   d = await db();
   const moved = d.tables.find((x) => x.id === added.id);
   assert.ok(moved.x < 500 && moved.y > 350, `table moved (${moved.x},${moved.y})`);
-  assert.equal(moved.x % 10, 0, 'snapped to grid');
   await page.fill('form[data-form=table] [name=label]', 'Bar 1');
   await page.fill('form[data-form=table] [name=seats]', '6');
   await page.selectOption('form[data-form=table] [name=shape]', 'round');
@@ -182,8 +184,13 @@ try {
   await page.waitForTimeout(100);
   d = await db();
   const concert = d.layouts.find((l) => l.name === 'Concert');
-  assert.equal(d.tables.filter((x) => x.layout_id === concert.id).length, 4);
-  step('layout editor: add, drag with snap, edit, duplicate');
+  assert.equal(d.tables.filter((x) => x.layout_id === concert.id).length, 5, '4 tables + stage copied');
+  await page.selectOption('[data-change=add-element]', 'speaker');
+  await page.waitForSelector('#editor-svg .fx-speaker');
+  d = await db();
+  const spk = d.tables.find((x) => x.kind === 'speaker');
+  assert.equal(spk?.seats, 0); assert.equal(spk.layout_id, concert.id, 'added to the layout being edited');
+  step('layout editor: add, drag, edit, duplicate, add speaker element');
 
   // Remove a table from Concert, then switch tonight to Concert -> mapping dialog
   const cT2 = d.tables.find((x) => x.layout_id === concert.id && x.label === 'T2');

@@ -32,8 +32,11 @@ const defaultLayoutId = () => S.layouts.find((l) => l.is_default)?.id;
 const nightLayoutId = () => S.dayLayout?.layout_id ?? defaultLayoutId();
 const layoutName = (id) => S.layouts.find((l) => l.id === id)?.name ?? '';
 const tableById = (id) => S.tables.find((x) => x.id === id);
+const isTable = (x) => (x.kind ?? 'table') === 'table';
+const itemsOf = (layoutId, floor) =>
+  S.tables.filter((x) => x.layout_id === layoutId && !x.archived && (!floor || x.floor === floor));
 const tablesOf = (layoutId, floor) =>
-  S.tables.filter((x) => x.layout_id === layoutId && !x.archived && (!floor || x.floor === floor))
+  itemsOf(layoutId, floor).filter(isTable)
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
 const personName = (id) => S.profiles.find((p) => p.id === id)?.display_name ?? '—';
 const isTonight = () => S.night === T.nightOf(Date.now(), S.settings);
@@ -205,27 +208,66 @@ function viewHeader() {
 }
 
 // Shared table drawing for the floor map and the layout editor.
-const CANVAS = { w: 800, h: 600 };
-function tableSize(tb) { return 84 + Math.min(tb.seats, 12) * 6; }
+const CANVAS = { w: 1200, h: 900 };
+const sizeOf = (tb) => ({ w: Number(tb.w) || 64, h: Number(tb.h) || 64 });
 function tableSvg(tb, cls, lines) {
-  const s = tableSize(tb), h = s / 2;
+  const { w, h } = sizeOf(tb);
   const shape = tb.shape === 'round'
-    ? `<circle cx="${tb.x}" cy="${tb.y}" r="${h}"/>`
-    : `<rect x="${tb.x - h}" y="${tb.y - h}" width="${s}" height="${s}" rx="10"/>`;
-  const text = lines.map((l, i) =>
-    `<text x="${tb.x}" y="${tb.y - 10 + i * 24}" class="${i === 0 ? 'tl' : 'ts'}">${esc(l)}</text>`).join('');
-  return `<g class="tbl ${cls}" data-tid="${tb.id}">${shape}${text}</g>`;
+    ? `<ellipse cx="${tb.x}" cy="${tb.y}" rx="${w / 2 - 1}" ry="${h / 2 - 1}"/>`
+    : `<rect x="${tb.x - w / 2 + 1}" y="${tb.y - h / 2 + 1}" width="${w - 2}" height="${h - 2}" rx="${isTable(tb) ? 6 : 24}"/>`;
+  const fs = Math.max(12, Math.min(18, Math.min(w, h) * 0.3));
+  const shown = isTable(tb) ? lines : (['door', 'wall', 'speaker'].includes(tb.kind) ? [] : [tb.label]);
+  const text = shown.filter(Boolean).map((l, i, a) =>
+    `<text x="${tb.x}" y="${tb.y + (i - (a.length - 1) / 2) * fs * 1.15}" class="${i === 0 ? 'tl' : 'ts'}" font-size="${i === 0 ? fs : fs * 0.72}">${esc(l)}</text>`).join('');
+  const kind = isTable(tb) ? 'tbl' : `tbl fx fx-${tb.kind}`;
+  const extra = tb.kind === 'speaker' ? `<circle cx="${tb.x}" cy="${tb.y}" r="${Math.min(w, h) / 5}" class="cone"/>` : '';
+  return `<g class="${kind} ${cls}" ${isTable(tb) || cls.includes('edit') ? `data-tid="${tb.id}"` : ''}>${shape}${extra}${text}</g>`;
+}
+const FIXTURES = {
+  stage: [240, 140, 'square'], bar: [40, 240, 'square'], speaker: [44, 44, 'square'], door: [20, 80, 'square'],
+  stairs: [80, 100, 'square'], restroom: [100, 80, 'square'], dj: [100, 60, 'square'], wall: [200, 12, 'square'],
+};
+async function addItem(kind) {
+  const existing = tablesOf(S.editLayoutId);
+  let row;
+  if (kind === 'table') {
+    let n = existing.length + 1;
+    while (existing.some((x) => x.label === `T${n}`)) n++;
+    row = { kind, label: `T${n}`, seats: 4, shape: 'square', w: 64, h: 64 };
+  } else {
+    const [w, h, shape] = FIXTURES[kind];
+    row = { kind, label: t('fx_' + kind), seats: 0, shape, w, h };
+  }
+  const box = $('#editor-svg')?.viewBox.baseVal;
+  const x = box ? Math.round(box.x + box.width / 2) : 400, y = box ? Math.round(box.y + box.height / 2) : 300;
+  try {
+    const saved = await run(sb.from('tables').insert({ ...row, layout_id: S.editLayoutId, floor: S.editFloor, x, y }).select().single());
+    S.selTable = saved.id; await reload();
+  } catch (e) { toast(errMsg(e), true); }
+}
+// Fit the drawing to what is on this floor.
+function viewBoxFor(items, pad = 24) {
+  if (!items.length) return `0 0 800 600`;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const it of items) {
+    const { w, h } = sizeOf(it);
+    x0 = Math.min(x0, it.x - w / 2); y0 = Math.min(y0, it.y - h / 2);
+    x1 = Math.max(x1, it.x + w / 2); y1 = Math.max(y1, it.y + h / 2);
+  }
+  return `${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}`;
 }
 
 function viewMap() {
   const lid = nightLayoutId();
   const tables = tablesOf(lid, S.floor);
+  const items = itemsOf(lid, S.floor);
   const ms = atMs();
   const times = T.slots(S.settings, 30);
-  const svg = tables.map((tb) => {
+  const svg = items.map((tb) => {
+    if (!isTable(tb)) return tableSvg(tb, '', []);
     const st = T.tableStateAt(tb.id, S.bookings, ms);
-    let info = `${tb.seats} ${t('seats_short')}`;
-    if (st.booking) info = `${hhmm(st.booking.start_at)} ${st.booking.guest_name || t('walk_in')}`.slice(0, 12);
+    let info = '';
+    if (st.booking) info = hhmm(st.booking.start_at);
     else if (st.next) info = `${t('next')} ${hhmm(st.next.start_at)}`;
     return tableSvg(tb, 'st-' + st.state, [tb.label, info]);
   }).join('');
@@ -241,7 +283,7 @@ function viewMap() {
       </label>
       <button class="primary" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
-    ${tables.length ? `<div class="floor-wrap"><svg class="floor" viewBox="0 0 ${CANVAS.w} ${CANVAS.h}" role="img" aria-label="${t('floor')} ${S.floor}">${svg}</svg></div>`
+    ${tables.length ? `<div class="floor-wrap"><svg class="floor" viewBox="${viewBoxFor(items)}" role="img" aria-label="${t('floor')} ${S.floor}">${svg}</svg></div>`
       : `<p class="empty">${t('no_tables')}${isManager() ? ' ' + t('no_tables_mgr') : ''}</p>`}
     <div class="legend">
       <span><i class="dot free"></i>${t('free')}</span>
@@ -290,7 +332,7 @@ function viewLayouts() {
   if (!S.editLayoutId) S.editLayoutId = nightLayoutId() ?? S.layouts[0]?.id;
   const lay = S.layouts.find((l) => l.id === S.editLayoutId);
   if (!lay) return `<section><button class="primary" data-action="layout-new">${ICON.plus} ${t('layout_new')}</button></section>`;
-  const tables = tablesOf(lay.id, S.editFloor);
+  const items = itemsOf(lay.id, S.editFloor);
   const sel = tableById(S.selTable);
   const selOk = sel && sel.layout_id === lay.id && !sel.archived;
   return `<section>
@@ -306,17 +348,25 @@ function viewLayouts() {
     <div class="row wrap between toolbar">
       <div class="seg">${[1, 2].map((f) =>
         `<button class="${S.editFloor === f ? 'on' : ''}" data-action="edit-floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
-      <button class="primary" data-action="table-add">${ICON.plus} ${t('table_add')}</button>
+      <div class="row">
+        <button class="primary" data-action="table-add">${ICON.plus} ${t('table_add')}</button>
+        <select data-change="add-element" aria-label="${t('add_element')}">
+          <option value="">+ ${t('add_element')}</option>
+          ${Object.keys(FIXTURES).map((k) => `<option value="${k}">${t('fx_' + k)}</option>`).join('')}
+        </select>
+      </div>
     </div>
     <p class="muted small-text">${t('drag_hint')}</p>
-    <div class="floor-wrap"><svg id="editor-svg" class="floor editor" viewBox="0 0 ${CANVAS.w} ${CANVAS.h}">
-      ${tables.map((tb) => tableSvg(tb, tb.id === S.selTable ? 'sel' : '', [tb.label, `${tb.seats} ${t('seats_short')}`])).join('')}
+    <div class="floor-wrap"><svg id="editor-svg" class="floor editor" viewBox="${viewBoxFor(items, 80)}">
+      ${items.map((tb) => tableSvg(tb, 'edit' + (tb.id === S.selTable ? ' sel' : ''), [tb.label, `${tb.seats} ${t('seats_short')}`])).join('')}
     </svg></div>
     ${selOk ? `<form data-form="table" class="panel stack">
       <input type="hidden" name="id" value="${sel.id}">
       <div class="grid2">
         <label>${t('table_name')}<input name="label" value="${esc(sel.label)}" required maxlength="20"></label>
-        <label>${t('seats')}<input name="seats" type="number" min="1" max="50" value="${sel.seats}" required></label>
+        ${isTable(sel) ? `<label>${t('seats')}<input name="seats" type="number" min="1" max="50" value="${sel.seats}" required></label>` : `<input type="hidden" name="seats" value="0">`}
+        <label>${t('width')}<input name="w" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).w}" required></label>
+        <label>${t('height')}<input name="h" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).h}" required></label>
         <label>${t('shape')}<select name="shape">
           <option value="square" ${sel.shape === 'square' ? 'selected' : ''}>${t('square')}</option>
           <option value="round" ${sel.shape === 'round' ? 'selected' : ''}>${t('round')}</option></select></label>
@@ -595,17 +645,7 @@ const actions = {
     try { await run(sb.from('layouts').delete().eq('id', S.editLayoutId)); S.editLayoutId = null; await reload(); }
     catch (e) { toast(errMsg(e), true); }
   },
-  async 'table-add'() {
-    const existing = tablesOf(S.editLayoutId);
-    let n = existing.length + 1;
-    while (existing.some((x) => x.label === `T${n}`)) n++;
-    try {
-      const row = await run(sb.from('tables').insert({
-        layout_id: S.editLayoutId, floor: S.editFloor, label: `T${n}`, seats: 4, shape: 'square', x: 400, y: 300,
-      }).select().single());
-      S.selTable = row.id; await reload();
-    } catch (e) { toast(errMsg(e), true); }
-  },
+  'table-add'() { return addItem('table'); },
   async 'table-remove'(el) {
     if (!confirm(t('confirm_remove_table'))) return;
     try { await run(sb.from('tables').update({ archived: true }).eq('id', el.dataset.id)); S.selTable = null; await reload(); }
@@ -632,6 +672,7 @@ const changes = {
   async night(el) { if (el.value) await goNight(el.value); },
   at(el) { S.at = el.value; render(); },
   'night-layout'(el) { changeNightLayout(el.value); },
+  'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
   'edit-layout'(el) { S.editLayoutId = el.value; S.selTable = null; render(); },
   async 'staff-role'(el) {
     try { await run(sb.from('profiles').update({ role: el.value }).eq('id', el.dataset.id)); await reload(); toast(t('saved')); }
@@ -656,7 +697,7 @@ const forms = {
   async table(f) {
     const v = Object.fromEntries(new FormData(f));
     try {
-      await run(sb.from('tables').update({ label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor) }).eq('id', v.id));
+      await run(sb.from('tables').update({ label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h) }).eq('id', v.id));
       S.editFloor = Number(v.floor); toast(t('saved')); await reload();
     } catch (e) { toast(errMsg(e), true); }
   },
@@ -708,10 +749,10 @@ document.addEventListener('pointerdown', (e) => {
 document.addEventListener('pointermove', (e) => {
   if (!drag) return;
   const p = svgPoint($('#editor-svg'), e);
-  const h = tableSize(drag.tb) / 2;
-  const snap = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(v / 10) * 10));
-  drag.nx = snap(p.x - drag.dx, h, CANVAS.w - h);
-  drag.ny = snap(p.y - drag.dy, h, CANVAS.h - h);
+  const { w: sw, h: sh } = sizeOf(drag.tb);
+  const snap = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(v)));
+  drag.nx = snap(p.x - drag.dx, sw / 2, CANVAS.w - sw / 2);
+  drag.ny = snap(p.y - drag.dy, sh / 2, CANVAS.h - sh / 2);
   drag.moved = drag.moved || drag.nx !== drag.tb.x || drag.ny !== drag.tb.y;
   drag.g.setAttribute('transform', `translate(${drag.nx - drag.tb.x} ${drag.ny - drag.tb.y})`);
 });

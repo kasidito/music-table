@@ -8,7 +8,8 @@
     tables: [
       { id: 'T1', layout_id: 'L1', floor: 1, label: 'T1', seats: 4, shape: 'square', x: 150, y: 150, archived: false },
       { id: 'T2', layout_id: 'L1', floor: 1, label: 'T2', seats: 2, shape: 'round', x: 400, y: 150, archived: false },
-      { id: 'T3', layout_id: 'L1', floor: 2, label: 'VIP', seats: 8, shape: 'square', x: 300, y: 300, archived: false },
+      { id: 'T3', layout_id: 'L1', floor: 2, label: 'VIP', seats: 8, shape: 'square', x: 300, y: 300, w: 128, h: 64, archived: false },
+      { id: 'F1', layout_id: 'L1', floor: 1, kind: 'stage', label: 'STAGE', seats: 0, shape: 'square', x: 300, y: 450, w: 300, h: 150, archived: false },
     ],
     profiles: [
       { id: 'U1', email: 'boss@bar.test', display_name: 'Boss', role: 'manager', active: true, created_at: '2026-01-01' },
@@ -57,7 +58,7 @@
           logHistory(null, r);
         }
         if (this.t === 'layouts') Object.assign(r, { is_default: false, created_at: now() });
-        if (this.t === 'tables') r.archived = false;
+        if (this.t === 'tables') Object.assign(r, { archived: false, kind: r.kind ?? 'table' });
         rows.push(r); out = [r];
       } else if (this.op === 'update') {
         out = rows.filter((r) => this.filters.every((f) => f(r)));

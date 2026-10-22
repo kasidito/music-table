@@ -136,4 +136,5 @@ set role anon;
 select t_expect_error($$select * from bookings$$, 'permission denied');
 reset role;
 
+
 select 'ALL TESTS PASSED' as result;

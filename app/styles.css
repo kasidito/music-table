@@ -81,21 +81,33 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 .seg button.on { background: var(--surface2); color: var(--accent); font-weight: 600; }
 
 svg.floor {
-  width: max(100%, 600px); height: auto; display: block;
+  width: 100%; height: auto; display: block; max-height: 75vh;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 40px 40px;
 }
 .floor-wrap { overflow-x: auto; border-radius: var(--radius); }
 svg.editor { touch-action: none; }
 .tbl { cursor: pointer; }
-.tbl circle, .tbl rect { fill: var(--surface2); stroke: var(--line); stroke-width: 3; }
+.tbl circle, .tbl rect, .tbl ellipse { fill: var(--surface2); stroke: var(--line); stroke-width: 3; }
 .tbl text { fill: var(--text); text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
-.tbl .tl { font-size: 26px; font-weight: 700; }
-.tbl .ts { font-size: 16px; fill: var(--muted); }
-.tbl.st-booked circle, .tbl.st-booked rect { fill: color-mix(in srgb, var(--booked) 30%, var(--surface2)); stroke: var(--booked); }
-.tbl.st-seated circle, .tbl.st-seated rect { fill: color-mix(in srgb, var(--seated) 35%, var(--surface2)); stroke: var(--seated); }
+.tbl .tl { font-weight: 700; }
+.tbl .ts { fill: var(--muted); }
+.fx { cursor: default; }
+.fx rect, .fx ellipse { fill: #241f1b; stroke: var(--line); stroke-width: 2; }
+.fx-bar rect { fill: #3a3016; }
+.fx-speaker rect { fill: #1b1816; rx: 8px; }
+.fx-speaker .cone { fill: none; stroke: var(--muted); stroke-width: 3; }
+.fx-wall rect { fill: var(--muted); stroke: none; }
+.fx-stairs rect { fill: #2a2420; stroke-dasharray: 2 6; }
+.fx-dj rect { fill: #2b2236; }
+.fx-restroom rect { fill: #1d2629; }
+.fx-door rect { fill: var(--bg); stroke: var(--muted); stroke-dasharray: 4 3; }
+.fx text { fill: var(--muted); letter-spacing: .08em; }
+.editor .fx { cursor: grab; }
+.tbl.st-booked circle, .tbl.st-booked rect, .tbl.st-booked ellipse { fill: color-mix(in srgb, var(--booked) 30%, var(--surface2)); stroke: var(--booked); }
+.tbl.st-seated circle, .tbl.st-seated rect, .tbl.st-seated ellipse { fill: color-mix(in srgb, var(--seated) 35%, var(--surface2)); stroke: var(--seated); }
 .tbl.st-booked .ts, .tbl.st-seated .ts { fill: var(--text); }
-.tbl.sel circle, .tbl.sel rect { stroke: var(--accent); stroke-width: 5; stroke-dasharray: 8 5; }
+.tbl.sel circle, .tbl.sel rect, .tbl.sel ellipse { stroke: var(--accent); stroke-width: 5; stroke-dasharray: 8 5; }
 
 .legend { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: .85rem; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
