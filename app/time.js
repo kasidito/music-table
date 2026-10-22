@@ -55,10 +55,24 @@ export function tableStateAt(tableId, bookings, ms) {
   const seated = mine.find((b) => b.status === 'seated' && startMs(b) <= ms);
   if (seated) return { state: 'seated', booking: seated };
   const booked = mine.find((b) => b.status === 'booked' && startMs(b) <= ms && ms < endMs(b));
-  if (booked) return { state: 'booked', booking: booked };
+  if (booked) return { state: isLate(booked, ms) ? 'late' : 'booked', booking: booked };
   const next = mine.filter((b) => startMs(b) > ms).sort((a, b) => startMs(a) - startMs(b))[0];
   return { state: 'free', next };
 }
+
+// A booking is late once guests are 15 minutes past their start time and not seated.
+export const LATE_MIN = 15;
+export const isLate = (b, ms) => b.status === 'booked' && ms >= startMs(b) + LATE_MIN * 60000 && ms < endMs(b);
+
+// Bookings still to arrive: late ones first, then by start time.
+export function upcoming(bookings, ms) {
+  return bookings.filter((b) => b.status === 'booked' && endMs(b) > ms)
+    .sort((a, b) => (isLate(b, ms) - isLate(a, ms)) || startMs(a) - startMs(b));
+}
+
+// Tables with at least one booking that still counts tonight.
+export const tablesBooked = (bookings) =>
+  new Set(bookings.filter((b) => b.status !== 'cancelled' && b.status !== 'no_show').map((b) => b.table_id)).size;
 
 export const NEXT_STATUS = { booked: ['seated', 'cancelled', 'no_show'], seated: ['done'], done: [], cancelled: [], no_show: [] };
 

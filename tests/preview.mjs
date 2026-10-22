@@ -41,13 +41,23 @@ const server = http.createServer((req, res) => {
 const browser = await chromium.launch({ executablePath: '/opt/google/chrome/chrome' });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
 await page.clock.setFixedTime(new Date('2026-10-22T22:00:00+07:00'));
+await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
 await page.goto(`http://127.0.0.1:${server.address().port}/`);
 await page.fill('[name=email]', 'boss@bar.test');
 await page.fill('[name=password]', 'password123');
 await page.click('button[type=submit]');
 await page.waitForSelector('svg.floor');
 await page.screenshot({ path: path.join(OUT, `map-f1-${W}.png`) });
+await page.click('svg.floor [data-tid] >> nth=13');
+await page.screenshot({ path: path.join(OUT, `map-sel-${W}.png`) });
+await page.click('#modal [data-action=close-modal]').catch(() => {});
 await page.click('[data-action=floor][data-f="2"]');
 await page.screenshot({ path: path.join(OUT, `map-f2-${W}.png`) });
+for (const v of ['list', 'summary', 'layouts', 'staff', 'settings']) {
+  if (W < 900 && !['list', 'summary'].includes(v)) { await page.click('.bottomnav [data-action=more]'); await page.click(`.menu-item[data-v="${v}"]`); }
+  else await page.click(`${W < 900 ? '.bottomnav' : '.rail'} [data-v="${v}"]`);
+  await page.waitForTimeout(150);
+  await page.screenshot({ path: path.join(OUT, `${v}-${W}.png`) });
+}
 await browser.close(); server.close();
 console.log('saved', rows.length, 'items');

@@ -1,5 +1,7 @@
 const DICT = {
   th: {
+    menu: 'เมนู', bookings_word: 'การจอง', more: 'เพิ่มเติม', language: 'ภาษา', pick_date: 'เลือกวันที่', tables_booked: 'โต๊ะที่จอง', seated_now: 'นั่งอยู่',
+    late: 'มาช้า', late_by: 'ช้า {n} นาที', people: 'คน', arrived: 'มาแล้ว', arriving: 'กำลังจะมา', no_arrivals: 'ไม่มีลูกค้าที่กำลังจะมา', see_all: 'ดูทั้งหมด',
     loading: 'กำลังโหลด…', login_hint: 'เข้าสู่ระบบด้วยบัญชีพนักงาน', email: 'อีเมล', password: 'รหัสผ่าน', login: 'เข้าสู่ระบบ',
     inactive: 'บัญชีนี้ยังไม่ได้เปิดใช้งาน กรุณาติดต่อผู้จัดการ', logout: 'ออกจากระบบ',
     tab_map: 'ผังร้าน', tab_list: 'รายการจอง', tab_summary: 'สรุปรายคืน', tab_layouts: 'แก้ผัง', tab_staff: 'พนักงาน', tab_settings: 'ตั้งค่า',
@@ -40,6 +42,8 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    menu: 'Menu', bookings_word: 'bookings', more: 'More', language: 'Language', pick_date: 'Pick a date', tables_booked: 'tables booked', seated_now: 'Seated',
+    late: 'Late', late_by: '{n} min late', people: 'guests', arrived: 'Arrived', arriving: 'Arriving next', no_arrivals: 'No one else expected', see_all: 'See all',
     loading: 'Loading…', login_hint: 'Sign in with your staff account', email: 'Email', password: 'Password', login: 'Sign in',
     inactive: 'This account is not active yet. Please contact a manager.', logout: 'Sign out',
     tab_map: 'Floor map', tab_list: 'Bookings', tab_summary: 'Nightly summary', tab_layouts: 'Edit layouts', tab_staff: 'Staff', tab_settings: 'Settings',

@@ -51,7 +51,8 @@ test('table state at time', () => {
   ];
   assert.equal(T.tableStateAt('A', list, ms('2030-01-10T19:00:00+07:00')).state, 'free');
   assert.equal(T.tableStateAt('A', list, ms('2030-01-10T19:00:00+07:00')).next.id, '1');
-  assert.equal(T.tableStateAt('A', list, ms('2030-01-10T20:30:00+07:00')).state, 'booked');
+  assert.equal(T.tableStateAt('A', list, ms('2030-01-10T20:10:00+07:00')).state, 'booked');
+  assert.equal(T.tableStateAt('A', list, ms('2030-01-10T20:30:00+07:00')).state, 'late');
   assert.equal(T.tableStateAt('B', list, ms('2030-01-10T23:00:00+07:00')).state, 'seated', 'seated holds table past its end');
   assert.equal(T.tableStateAt('C', list, ms('2030-01-10T23:00:00+07:00')).state, 'free');
 });
@@ -65,4 +66,25 @@ test('nightly summary', () => {
     b('5', 'D', '2030-01-11T01:00:00+07:00', 60, 'booked', { party_size: 2 }),
   ];
   assert.deepEqual(T.summary(list), { bookings: 4, guests: 9, walkIns: 1, cancelled: 1, noShows: 1 });
+});
+
+test('late after 15 minutes, until the slot ends', () => {
+  const x = b('1', 'A', '2030-01-10T20:00:00+07:00', 120);
+  assert.equal(T.isLate(x, ms('2030-01-10T20:14:00+07:00')), false);
+  assert.equal(T.isLate(x, ms('2030-01-10T20:15:00+07:00')), true);
+  assert.equal(T.isLate(x, ms('2030-01-10T22:00:00+07:00')), false);
+  assert.equal(T.isLate({ ...x, status: 'seated' }, ms('2030-01-10T20:30:00+07:00')), false);
+  assert.equal(T.tableStateAt('A', [x], ms('2030-01-10T20:30:00+07:00')).state, 'late');
+});
+
+test('upcoming: late first, then by time; tables booked ignores cancelled', () => {
+  const list = [
+    b('1', 'A', '2030-01-10T22:00:00+07:00', 60),
+    b('2', 'B', '2030-01-10T20:00:00+07:00', 120),
+    b('3', 'C', '2030-01-10T21:30:00+07:00', 60),
+    b('4', 'D', '2030-01-10T21:00:00+07:00', 60, 'seated'),
+    b('5', 'E', '2030-01-10T23:00:00+07:00', 60, 'cancelled'),
+  ];
+  assert.deepEqual(T.upcoming(list, ms('2030-01-10T21:00:00+07:00')).map((x) => x.id), ['2', '3', '1']);
+  assert.equal(T.tablesBooked(list), 4);
 });

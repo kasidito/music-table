@@ -28,10 +28,17 @@ page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 let promptAnswer = '';
 page.on('dialog', (d) => d.accept(promptAnswer));
 await page.clock.setFixedTime(new Date('2026-10-22T21:00:00+07:00'));
+await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
 
 const shot = (n) => page.screenshot({ path: path.join(SHOTS, n + '.png'), fullPage: true });
 const db = () => page.evaluate(() => window.__db);
 const step = (name) => console.log('ok -', name);
+async function go(v) {
+  const direct = page.locator(`.bottomnav [data-v="${v}"]`);
+  if (await direct.count()) return direct.click();
+  await page.click('.bottomnav [data-action=more]');
+  await page.click(`.menu-item[data-v="${v}"]`);
+}
 
 try {
   await page.goto(URL_);
@@ -49,7 +56,9 @@ try {
   await page.click('button[type=submit]');
   await page.waitForSelector('svg.floor');
   assert.equal(await page.locator('svg.floor [data-tid]').count(), 2, 'floor 1 has 2 tables');
-  for (const tab of ['แก้ผัง', 'พนักงาน', 'ตั้งค่า']) assert.ok(await page.locator('.tab', { hasText: tab }).count());
+  await page.click('.bottomnav [data-action=more]');
+  for (const v of ['layouts', 'staff', 'settings']) assert.ok(await page.locator(`.menu-item[data-v="${v}"]`).count(), v);
+  await page.click('#modal [data-action=close-modal]');
   assert.equal(await page.locator('svg.floor .fx-stage').count(), 1, 'stage drawn');
   await page.click('svg.floor .fx-stage');
   assert.ok(await page.locator('#modal').isHidden(), 'stage is not bookable');
@@ -69,11 +78,14 @@ try {
   assert.equal(d.bookings.length, 1);
   assert.equal(d.bookings[0].night, '2026-10-22');
   assert.equal(d.bookings[0].table_id, 'T1');
-  assert.equal(await page.getAttribute('svg.floor [data-tid=T1]', 'class'), 'tbl st-booked');
-  step('booking created and table turns booked at 21:00');
+  const cls = async (sel) => (await page.getAttribute(sel, 'class')).split(/\s+/);
+  assert.ok((await cls('svg.floor [data-tid=T1]')).includes('st-late'));
+  assert.match(await page.textContent('.stats-row'), /มาช้า/);
+  assert.match(await page.textContent('.upcoming'), /สมชาย/);
+  step('booking created; at 21:00 the 20:00 booking shows late on map, stats and arriving list');
 
   // Overlap + too many guests -> warning, then save anyway
-  await page.click('.toolbar [data-action=new-booking]');
+  await page.click('[data-action=new-booking].nb');
   await page.fill('#modal [name=guest_name]', 'Overlap');
   await page.fill('#modal [name=phone]', '0800000000');
   await page.fill('#modal [name=party_size]', '6');
@@ -91,7 +103,7 @@ try {
   step('overlap and capacity warnings shown, save anyway works');
 
   // After-midnight booking belongs to tonight
-  await page.click('.toolbar [data-action=new-booking]');
+  await page.click('[data-action=new-booking].nb');
   await page.fill('#modal [name=guest_name]', 'Late');
   await page.fill('#modal [name=phone]', '0811111111');
   await page.selectOption('#modal [name=time]', '01:00');
@@ -113,12 +125,12 @@ try {
   d = await db();
   const walk = d.bookings.find((b) => b.is_walk_in);
   assert.equal(walk.status, 'seated'); assert.equal(walk.table_id, 'T2');
-  assert.equal(await page.getAttribute('svg.floor [data-tid=T2]', 'class'), 'tbl st-seated');
+  assert.ok((await cls('svg.floor [data-tid=T2]')).includes('st-seated'));
   await shot('04-map-with-bookings');
   step('walk-in added in 3 taps and table shows seated');
 
   // List, open booking, seat then done, history
-  await page.click('.tab:has-text("รายการจอง")');
+  await go('list');
   assert.equal(await page.locator('.brow').count(), 4);
   await page.click('.brow:has-text("สมชาย")');
   await page.click('[data-action=set-status][data-s=seated]');
@@ -149,14 +161,14 @@ try {
   step('edit booking');
 
   // Summary
-  await page.click('.tab:has-text("สรุปรายคืน")');
+  await go('summary');
   const nums = await page.locator('.stat .num').allTextContents();
   assert.deepEqual(nums, ['3', '6', '1', '0', '1'], 'bookings, guests (4 done + 2 walk-in), walk-ins, cancelled, no-show');
   await shot('07-summary');
   step('nightly summary numbers');
 
   // Layout editor: add, drag, edit, duplicate
-  await page.click('.tab:has-text("แก้ผัง")');
+  await go('layouts');
   await page.click('[data-action=table-add]');
   await page.waitForSelector('form[data-form=table]');
   d = await db();
@@ -199,7 +211,7 @@ try {
   await page.click('[data-action=table-remove]');
   await page.waitForTimeout(100);
   assert.ok((await db()).tables.find((x) => x.id === cT2.id).archived);
-  await page.click('.tab:has-text("ผังร้าน")');
+  await go('map');
   await page.selectOption('[data-change=night-layout]', concert.id);
   await page.waitForSelector('form[data-form=mapping]');
   await shot('09-move-bookings');
@@ -218,14 +230,14 @@ try {
   step('switch night to Concert with booking mapping');
 
   // Staff and settings
-  await page.click('.tab:has-text("พนักงาน")');
+  await go('staff');
   await page.fill('form[data-form=staff] [name=display_name]', 'Mai');
   await page.fill('form[data-form=staff] [name=email]', 'mai@bar.test');
   await page.fill('form[data-form=staff] [name=password]', 'longpassword');
   await page.click('form[data-form=staff] button[type=submit]');
   await page.waitForSelector('.srow:has-text("Mai")');
   await shot('10-staff');
-  await page.click('.tab:has-text("ตั้งค่า")');
+  await go('settings');
   await page.fill('form[data-form=settings] [name=default_duration_min]', '90');
   await page.click('form[data-form=settings] button[type=submit]');
   await page.waitForTimeout(100);
@@ -233,9 +245,10 @@ try {
   step('add staff account and change settings');
 
   // Language
-  await page.click('[data-action=lang]');
-  assert.ok(await page.locator('.tab', { hasText: 'Floor map' }).count());
-  await page.click('.tab:has-text("Floor map")');
+  await page.click('.bottomnav [data-action=more]');
+  await page.click('.menu-item[data-action=lang]');
+  assert.ok(await page.locator('.bn-item', { hasText: 'Floor map' }).count());
+  await go('map');
   await shot('11-map-english');
   const thKeys = await page.evaluate(async () => {
     const m = await import('./i18n.js');
@@ -246,13 +259,15 @@ try {
   step('language switch to English, every label has both languages');
 
   // Staff role: no manager tabs
-  await page.click('[data-action=logout]');
+  await page.click('.bottomnav [data-action=more]');
+  await page.click('.menu-item[data-action=logout]');
   await page.waitForSelector('form[data-form=login]');
   await page.fill('[name=email]', 'staff@bar.test');
   await page.fill('[name=password]', 'password123');
   await page.click('button[type=submit]');
   await page.waitForSelector('svg.floor');
-  assert.equal(await page.locator('.tab').count(), 3);
+  await page.click('.bottomnav [data-action=more]');
+  assert.equal(await page.locator('.menu-item[data-action=view]').count(), 0, 'no manager pages');
   assert.equal(await page.locator('[data-change=night-layout]').count(), 0);
   step('staff sees no manager tabs or layout picker');
 

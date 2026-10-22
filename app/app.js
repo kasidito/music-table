@@ -15,6 +15,16 @@ const ICON = {
   close: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
   person: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>',
   walk: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13" cy="4" r="2"/><path d="M7 21l3-7 3 3v5M10 14l1-5 4 3 3 1M9 9l2-1"/></svg>',
+  map: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><circle cx="6.5" cy="17.5" r="3.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  list: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  people: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v1M17 4a4 4 0 0 1 0 8M22 21v-1a6 6 0 0 0-4-5.6"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>',
+  more: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>',
   warn: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
 };
 
@@ -150,14 +160,15 @@ function render() {
     map: viewMap, list: viewList, summary: viewSummary,
     layouts: viewLayouts, staff: viewStaff, settings: viewSettings,
   }[S.view]();
-  app.innerHTML = viewHeader() + `<main>${body}</main>`;
+  app.innerHTML = `<div class="shell">${viewRail()}<div class="col">${viewTop()}<main>${body}</main></div>${
+    S.view === 'map' ? `<aside class="side" aria-label="${t('tonight')}">${viewAside()}</aside>` : ''}</div>${viewBottomNav()}`;
   fitFloors();
 }
 
 // Make each floor drawing fill the space left on screen, so the whole floor shows without scrolling.
 function fitFloors() {
   for (const svg of document.querySelectorAll('#app svg.floor')) {
-    const below = svg.id === 'editor-svg' ? 16 : 52;
+    const below = (svg.id === 'editor-svg' ? 16 : 52) + (wide() ? 0 : 96);
     const room = Math.max(240, window.innerHeight - svg.getBoundingClientRect().top - window.scrollY - below);
     const vb = svg.viewBox.baseVal, maxW = svg.parentElement.clientWidth;
     const h = Math.min(room, (maxW * vb.height) / vb.width);
@@ -190,35 +201,86 @@ function viewInactive() {
   </div>`;
 }
 
-function viewHeader() {
-  const tabs = [['map', t('tab_map')], ['list', t('tab_list')], ['summary', t('tab_summary')]];
-  if (isManager()) tabs.push(['layouts', t('tab_layouts')], ['staff', t('tab_staff')], ['settings', t('tab_settings')]);
-  const nightTools = ['map', 'list', 'summary'].includes(S.view);
+const wide = () => window.matchMedia('(min-width: 900px)').matches;
+const NIGHT_VIEWS = ['map', 'list', 'summary'];
+function navItems() {
+  const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart]];
+  if (isManager()) items.push(['layouts', 'tab_layouts', ICON.edit], ['staff', 'tab_staff', ICON.people], ['settings', 'tab_settings', ICON.gear]);
+  return items;
+}
+const navBtn = (v, k, ic, cls) =>
+  `<button class="${cls} ${S.view === v ? 'on' : ''}" data-action="view" data-v="${v}" ${S.view === v ? 'aria-current="page"' : ''}>${ic}<span>${t(k)}</span></button>`;
+
+function viewRail() {
+  return `<nav class="rail" aria-label="${t('menu')}">
+    <div class="rail-logo" aria-hidden="true">MT</div>
+    ${navItems().map(([v, k, ic]) => navBtn(v, k, ic, 'rail-item')).join('')}
+    <div class="grow"></div>
+    <button class="rail-item" data-action="lang"><span class="lang-mark">${getLang() === 'th' ? 'EN' : 'TH'}</span><span>${t('language')}</span></button>
+    <button class="rail-item" data-action="logout">${ICON.logout}<span>${t('logout')}</span></button>
+  </nav>`;
+}
+
+function viewBottomNav() {
+  const moreOn = !NIGHT_VIEWS.includes(S.view);
+  return `<nav class="bottomnav" aria-label="${t('menu')}">
+    ${navItems().slice(0, 3).map(([v, k, ic]) => navBtn(v, k, ic, 'bn-item')).join('')}
+    <button class="bn-item ${moreOn ? 'on' : ''}" data-action="more">${ICON.more}<span>${t('more')}</span></button>
+  </nav>`;
+}
+
+const WEEKDAYS = { th: ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'], en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] };
+const MONTHS = { th: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'], en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] };
+const dayParts = (date) => { const d = new Date(date + 'T00:00:00Z'); return { wd: WEEKDAYS[getLang()][d.getUTCDay()], day: d.getUTCDate(), mon: MONTHS[getLang()][d.getUTCMonth()] }; };
+
+function dateStrip() {
+  const tonight = T.nightOf(Date.now(), S.settings);
+  const days = [0, 1, 2, 3].map((n) => T.addDays(tonight, n));
+  if (!days.includes(S.night)) days[3] = S.night;
+  return `<div class="datestrip" role="group" aria-label="${t('night')}">
+    ${days.map((d) => { const p = dayParts(d); return `<button class="day ${d === S.night ? 'on' : ''}" data-action="go-night" data-d="${d}" aria-pressed="${d === S.night}">
+      <span class="wd">${d === tonight ? t('tonight') : p.wd}</span><span class="dn">${p.day}</span><span class="mo">${p.mon}</span></button>`; }).join('')}
+    <label class="day cal" aria-label="${t('pick_date')}">${ICON.cal}<input type="date" value="${S.night}" data-change="night"></label>
+  </div>`;
+}
+
+function statsRow() {
+  const now = Date.now();
+  const total = tablesOf(nightLayoutId()).length;
+  const seated = S.bookings.filter((b) => b.status === 'seated').length;
+  const late = isTonight() ? S.bookings.filter((b) => T.isLate(b, now)).length : 0;
+  return `<div class="stats-row">
+    <span class="chip"><b>${T.tablesBooked(S.bookings)}</b>/${total} ${t('tables_booked')}</span>
+    <span class="chip"><b class="c-seated">${seated}</b> ${t('seated_now')}</span>
+    ${late ? `<span class="chip late"><b>${late}</b> ${t('late')}</span>` : ''}
+  </div>`;
+}
+
+function viewTop() {
+  const night = NIGHT_VIEWS.includes(S.view);
+  const p = dayParts(S.night);
   const layoutPicker = isManager()
-    ? `<select data-change="night-layout" aria-label="${t('night_layout')}">${S.layouts.map((l) =>
-        `<option value="${l.id}" ${l.id === nightLayoutId() ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>`
-    : `<span class="pill">${esc(layoutName(nightLayoutId()))}</span>`;
-  return `<header>
-    <div class="row between">
-      <strong class="brand">Music Table</strong>
-      <div class="row">
-        <span class="muted small-text">${esc(S.me.display_name)}</span>
-        ${langBtn()}
-        <button class="icon" data-action="logout" title="${t('logout')}" aria-label="${t('logout')}">${ICON.logout}</button>
-      </div>
+    ? `<select class="layout-pick" data-change="night-layout" aria-label="${t('night_layout')}">${S.layouts.map((l) =>
+        `<option value="${l.id}" ${l.id === nightLayoutId() ? 'selected' : ''}>${t('layout')}: ${esc(l.name)}</option>`).join('')}</select>`
+    : `<span class="eyebrow">${t('layout')}: ${esc(layoutName(nightLayoutId()))}</span>`;
+  if (!night) return `<header class="topbar"><h1 class="page-title">${t('tab_' + S.view)}</h1></header>`;
+  return `<header class="topbar">
+    <div class="row between wrap top-row">
+      <div><div class="eyebrow">MUSIC TABLE</div><div class="night-title">${p.wd} ${p.day} ${p.mon}${isTonight() ? ` <span class="tag">${t('tonight')}</span>` : ''}</div></div>
+      ${layoutPicker}
     </div>
-    ${nightTools ? `<div class="row wrap night-row">
-      <div class="row datenav">
-        <button class="icon" data-action="night-prev" aria-label="${t('prev_night')}">${ICON.left}</button>
-        <input type="date" value="${S.night}" data-change="night" aria-label="${t('night')}">
-        <button class="icon" data-action="night-next" aria-label="${t('next_night')}">${ICON.right}</button>
-        ${isTonight() ? '' : `<button class="ghost small" data-action="night-today">${t('tonight')}</button>`}
-      </div>
-      <label class="row inline-label">${t('layout')} ${layoutPicker}</label>
-    </div>` : ''}
-    <nav class="tabs">${tabs.map(([v, label]) =>
-      `<button class="tab ${S.view === v ? 'on' : ''}" data-action="view" data-v="${v}">${label}</button>`).join('')}</nav>
+    ${dateStrip()}
+    ${statsRow()}
   </header>`;
+}
+
+function moreSheet() {
+  openModal(`<h2>${esc(S.me.display_name)}</h2>
+    <div class="menu-list">
+      ${navItems().slice(3).map(([v, k, ic]) => `<button class="menu-item" data-action="view" data-v="${v}">${ic}<span>${t(k)}</span></button>`).join('')}
+      <button class="menu-item" data-action="lang"><span class="lang-mark">${getLang() === 'th' ? 'EN' : 'TH'}</span><span>${t('language')}: ${getLang() === 'th' ? 'ไทย' : 'English'}</span></button>
+      <button class="menu-item" data-action="logout">${ICON.logout}<span>${t('logout')}</span></button>
+    </div>`);
 }
 
 // Shared table drawing for the floor map and the layout editor.
@@ -271,56 +333,114 @@ function viewBoxFor(items, pad = 24) {
   return `${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}`;
 }
 
-function viewMap() {
+function mapSvg() {
   const lid = nightLayoutId();
-  const tables = tablesOf(lid, S.floor);
   const items = itemsOf(lid, S.floor);
   const ms = atMs();
-  const times = T.slots(S.settings, 30);
-  const svg = items.map((tb) => {
+  const body = items.map((tb) => {
     if (!isTable(tb)) return tableSvg(tb, '', []);
     const st = T.tableStateAt(tb.id, S.bookings, ms);
-    let info = '';
-    if (st.booking) info = hhmm(st.booking.start_at);
-    else if (st.next) info = hhmm(st.next.start_at);
-    return tableSvg(tb, 'st-' + st.state, [tb.label, info]);
+    const info = st.booking ? hhmm(st.booking.start_at) : st.next ? hhmm(st.next.start_at) : '';
+    return tableSvg(tb, 'st-' + st.state + (tb.id === S.selTable && wide() ? ' sel' : ''), [tb.label, info]);
   }).join('');
-  return `<section>
+  return `<svg class="floor" viewBox="${viewBoxFor(items)}" role="img" aria-label="${t('floor')} ${S.floor}">${body}</svg>`;
+}
+
+function timeSlots() { return T.slots(S.settings, 15); }
+function atIndex() {
+  const slots = timeSlots();
+  if (S.at !== 'now') return Math.max(0, slots.indexOf(S.at));
+  if (!isTonight()) return 0;
+  const now = Date.now();
+  let i = 0;
+  slots.forEach((x, k) => { if (T.nightTimeToMs(S.night, x, S.settings) <= now) i = k; });
+  return i;
+}
+const atLabel = () => (S.at === 'now' && isTonight() ? `${t('now')} ${T.bkkParts(Date.now()).hhmm}` : timeSlots()[atIndex()]);
+
+function upcomingRow(b) {
+  const late = T.isLate(b, Date.now()) && isTonight();
+  return `<div class="up-row ${late ? 'late' : ''}">
+    <button class="up-main" data-action="open-booking" data-id="${b.id}">
+      <span class="time">${hhmm(b.start_at)}</span>
+      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tableById(b.table_id)?.label ?? '')}</b>
+        <span class="small-text">${late ? t('late_by').replace('{n}', Math.round((Date.now() - T.startMs(b)) / 60000)) + ' · ' : ''}${b.party_size} ${t('people')}${b.note ? ' · ' + esc(b.note) : ''}</span></span>
+    </button>
+    ${isTonight() ? `<button class="${late ? 'primary' : 'ghost'} small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button>` : ''}
+  </div>`;
+}
+
+function viewMap() {
+  const tables = tablesOf(nightLayoutId(), S.floor);
+  const slots = timeSlots();
+  const up = T.upcoming(S.bookings, atMs());
+  return `<section class="mapview">
     <div class="row wrap between toolbar">
-      <div class="seg">${[1, 2].map((f) =>
-        `<button class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
-      <label class="row inline-label">${t('at_time')}
-        <select data-change="at">
-          ${isTonight() ? `<option value="now" ${S.at === 'now' ? 'selected' : ''}>${t('now')}</option>` : ''}
-          ${times.map((x) => `<option ${S.at === x ? 'selected' : ''}>${x}</option>`).join('')}
-        </select>
-      </label>
-      <button class="primary" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
+      <div class="seg" role="tablist">${[1, 2].map((f) =>
+        `<button role="tab" aria-selected="${S.floor === f}" class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
+      <div class="timebar">
+        ${ICON.clock}<span id="at-label" class="at-label">${atLabel()}</span>
+        <input id="at-range" type="range" min="0" max="${slots.length - 1}" step="1" value="${atIndex()}" data-input="at" aria-label="${t('at_time')}">
+        ${isTonight() && S.at !== 'now' ? `<button class="ghost small" data-action="at-now">${t('now')}</button>` : ''}
+      </div>
+      <button class="primary nb" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
-    ${tables.length ? `<div class="floor-wrap"><svg class="floor" viewBox="${viewBoxFor(items)}" role="img" aria-label="${t('floor')} ${S.floor}">${svg}</svg></div>`
+    ${tables.length ? `<div class="floor-wrap" id="floor-wrap">${mapSvg()}</div>`
       : `<p class="empty">${t('no_tables')}${isManager() ? ' ' + t('no_tables_mgr') : ''}</p>`}
     <div class="legend">
       <span><i class="dot free"></i>${t('free')}</span>
       <span><i class="dot booked"></i>${t('st_booked')}</span>
       <span><i class="dot seated"></i>${t('st_seated')}</span>
+      <span><i class="dot late"></i>${t('late')}</span>
+    </div>
+    <div class="phone-only upcoming">
+      <div class="sec-title">${t('arriving')}</div>
+      ${up.length ? up.slice(0, 3).map(upcomingRow).join('') : `<p class="muted small-text">${t('no_arrivals')}</p>`}
+      ${up.length > 3 ? `<button class="ghost small" data-action="view" data-v="list">${t('see_all')} (${up.length})</button>` : ''}
     </div>
   </section>`;
 }
 
+function viewAside() {
+  const ms = atMs();
+  const sel = tableById(S.selTable);
+  const up = T.upcoming(S.bookings, ms);
+  const seated = S.bookings.filter((b) => b.status === 'seated');
+  const selCard = sel && sel.layout_id === nightLayoutId() ? (() => {
+    const list = S.bookings.filter((b) => b.table_id === sel.id);
+    const free = isTonight() && T.tableStateAt(sel.id, S.bookings, Date.now()).state === 'free';
+    return `<div class="card sel-card">
+      <div class="row between"><h2>${esc(sel.label)}</h2><button class="icon" data-action="unselect" aria-label="${t('close')}">${ICON.close}</button></div>
+      <div class="muted small-text">${t('floor')} ${sel.floor} · ${sel.seats} ${t('seats_short')}</div>
+      <div class="list">${list.length ? list.map(bookingRow).join('') : `<p class="muted small-text">${t('no_bookings')}</p>`}</div>
+      <div class="row wrap">
+        <button class="primary small" data-action="new-booking" data-table="${sel.id}">${ICON.plus} ${t('new_booking')}</button>
+        ${free ? `<button class="small" data-action="walk-in" data-table="${sel.id}">${ICON.walk} ${t('walk_in')}</button>` : ''}
+      </div>
+    </div>`;
+  })() : '';
+  return `${selCard}
+    <div class="sec-title">${t('arriving')}</div>
+    ${up.length ? up.slice(0, 8).map(upcomingRow).join('') : `<p class="muted small-text">${t('no_arrivals')}</p>`}
+    <div class="sec-title">${t('seated_now')} (${seated.length})</div>
+    <div class="row wrap">${seated.map((b) => `<button class="seat-chip" data-action="select-table" data-id="${b.table_id}">${esc(tableById(b.table_id)?.label ?? '')}</button>`).join('') || '<span class="muted small-text">—</span>'}</div>`;
+}
+
 function bookingRow(b) {
+  const st = isTonight() && T.isLate(b, Date.now()) ? 'late' : b.status;
   return `<button class="brow st-${b.status}" data-action="open-booking" data-id="${b.id}">
     <span class="time">${hhmm(b.start_at)}</span>
     <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong>
       <span class="muted small-text"> ${esc(tableLabel(b.table_id))} · ${ICON.person} ${b.party_size}</span>
       ${b.note ? `<span class="muted small-text note">${esc(b.note)}</span>` : ''}</span>
-    <span class="pill st-${b.status}">${t('st_' + b.status)}</span>
+    <span class="pill st-${st}">${st === 'late' ? t('late') : t('st_' + b.status)}</span>
   </button>`;
 }
 
 function viewList() {
   return `<section>
     <div class="row between toolbar">
-      <h2>${t('bookings_for')} ${S.night}</h2>
+      <h2>${S.bookings.length} ${t('bookings_word')}</h2>
       <button class="primary" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
     ${S.bookings.length ? `<div class="list">${S.bookings.map(bookingRow).join('')}</div>` : `<p class="empty">${t('no_bookings')}</p>`}
@@ -396,7 +516,6 @@ function viewLayouts() {
 
 function viewStaff() {
   return `<section>
-    <h2>${t('tab_staff')}</h2>
     <div class="list">${S.profiles.map((p) => `<div class="srow">
       <div class="grow"><strong>${esc(p.display_name)}</strong><div class="muted small-text">${esc(p.email)}</div></div>
       <select data-change="staff-role" data-id="${p.id}">
@@ -421,7 +540,6 @@ function viewStaff() {
 function viewSettings() {
   const s = S.settings;
   return `<section>
-    <h2>${t('tab_settings')}</h2>
     <form data-form="settings" class="panel stack">
       <div class="grid2">
         <label>${t('open_time')}<input name="open_time" type="time" value="${s.open_time.slice(0, 5)}" required></label>
@@ -606,15 +724,20 @@ async function applyNightLayout(layoutId, mapping) {
 
 // ───────── Events ─────────
 const actions = {
-  async lang() { setLang(getLang() === 'th' ? 'en' : 'th'); document.documentElement.lang = getLang(); render(); },
-  async logout() { await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
-  view(el) { S.view = el.dataset.v; S.selTable = null; render(); },
+  async lang() { setLang(getLang() === 'th' ? 'en' : 'th'); document.documentElement.lang = getLang(); closeModal(); render(); },
+  async logout() { closeModal(); await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
+  view(el) { closeModal(); S.view = el.dataset.v; S.selTable = null; render(); window.scrollTo(0, 0); },
   floor(el) { S.floor = Number(el.dataset.f); render(); },
   'edit-floor'(el) { S.editFloor = Number(el.dataset.f); S.selTable = null; render(); },
   async 'night-prev'() { await goNight(T.addDays(S.night, -1)); },
   async 'night-next'() { await goNight(T.addDays(S.night, 1)); },
   async 'night-today'() { await goNight(T.nightOf(Date.now(), S.settings)); },
   'close-modal'() { closeModal(); },
+  more() { moreSheet(); },
+  async 'go-night'(el) { await goNight(el.dataset.d); },
+  'at-now'() { S.at = 'now'; render(); },
+  unselect() { S.selTable = null; render(); },
+  'select-table'(el) { S.selTable = el.dataset.id; S.floor = tableById(el.dataset.id)?.floor ?? S.floor; render(); },
   'new-booking'(el) { openModal(bookingForm(null, { tableId: el.dataset.table })); },
   'walk-in'(el) { openModal(bookingForm(null, { walkIn: true, tableId: el.dataset.table })); },
   'open-booking'(el) { openBooking(el.dataset.id); },
@@ -677,7 +800,10 @@ document.addEventListener('click', (e) => {
   const modal = $('#modal');
   if (e.target === modal) return closeModal();
   const tbl = e.target.closest('svg.floor:not(.editor) [data-tid]');
-  if (tbl) return openTable(tbl.dataset.tid);
+  if (tbl) {
+    if (wide()) { S.selTable = tbl.dataset.tid; return render(); }
+    return openTable(tbl.dataset.tid);
+  }
   const el = e.target.closest('[data-action]');
   if (el && actions[el.dataset.action]) actions[el.dataset.action](el);
 });
@@ -697,6 +823,16 @@ const changes = {
     catch (e) { toast(errMsg(e), true); await reload(); }
   },
 };
+document.addEventListener('input', (e) => {
+  if (e.target.dataset.input !== 'at') return;
+  S.at = timeSlots()[Number(e.target.value)];
+  $('#at-label').textContent = S.at;
+  const wrap = $('#floor-wrap');
+  if (wrap) { wrap.innerHTML = mapSvg(); fitFloors(); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.dataset.input === 'at') return render();
+});
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
   if (el && changes[el.dataset.change]) changes[el.dataset.change](el);
