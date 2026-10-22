@@ -3,7 +3,17 @@
   const uid = () => crypto.randomUUID();
   const now = () => new Date().toISOString();
   const db = (window.__db = {
-    settings: [{ id: 1, open_time: '18:00:00', close_time: '02:00:00', default_duration_min: 120 }],
+    settings: [{ id: 1, open_time: '18:00:00', close_time: '02:00:00', default_duration_min: 120, shop_name: 'Music Table',
+      confirm_template: 'สวัสดีค่ะคุณ{name}\nยืนยันโต๊ะ {table} ที่ {shop}\n{date} {time} น. {guests} ท่าน\n{payment}',
+      reminder_template: 'เตือนคุณ{name} โต๊ะ {table} {date} {time} น.' }],
+    products: [
+      { id: 'PR1', name: 'SET WALK-IN', price: 700, per_person: true, active: true, created_at: '2026-01-01' },
+      { id: 'PR2', name: 'Monkey Shoulder', price: 1990, per_person: false, active: true, created_at: '2026-01-02' },
+    ],
+    guests: [],
+    booking_items: [],
+    booking_payments: [],
+    app_logs: [],
     layouts: [{ id: 'L1', name: 'Normal', is_default: true, created_at: '2026-01-01' }],
     tables: [
       { id: 'T1', layout_id: 'L1', floor: 1, label: 'T1', seats: 4, shape: 'square', x: 150, y: 150, archived: false, color: '#D7261E', price: 3300 },
@@ -36,10 +46,44 @@
       changed_at: now(), action: oldRow ? 'update' : 'insert', old_row: oldRow ? { ...oldRow } : null, new_row: { ...newRow } });
   }
 
+  const normPhone = (p) => String(p ?? '').replace(/[^0-9+]/g, '');
+  function linkGuest(b) {
+    const p = normPhone(b.phone);
+    if (p.replace(/\D/g, '').length < 6) { b.guest_id = null; return; }
+    let g = db.guests.find((x) => x.phone === p);
+    if (!g) { g = { id: uid(), phone: p, name: b.guest_name ?? '', tags: [], note: '', created_at: now() }; db.guests.push(g); }
+    else if (!g.name) g.name = b.guest_name ?? '';
+    b.guest_id = g.id;
+  }
+  const dueOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])].reduce((n, id) => n + (db.tables.find((x) => x.id === id)?.price ?? 0), 0)
+    + db.booking_items.filter((i) => i.booking_id === b.id).reduce((n, i) => n + i.unit_price * i.qty, 0);
+  function recompute(bookingId) {
+    const b = db.bookings.find((x) => x.id === bookingId);
+    if (!b) return;
+    const got = db.booking_payments.filter((p) => p.booking_id === bookingId).reduce((n, p) => n + p.amount, 0);
+    const paid = got > 0 && got >= dueOf(b);
+    if (b.amount_paid === got && b.paid === paid) return;
+    const old = { ...b };
+    b.amount_paid = got;
+    if (paid !== b.paid) { b.paid = paid; b.paid_at = paid ? now() : null; b.paid_by = paid ? session?.user.id : null; }
+    logHistory(old, b);
+  }
+  const guestStats = () => db.guests.map((g) => {
+    const mine = db.bookings.filter((b) => b.guest_id === g.id);
+    return { guest_id: g.id, visits: mine.filter((b) => ['seated', 'done'].includes(b.status)).length,
+      no_shows: mine.filter((b) => b.status === 'no_show').length, cancellations: mine.filter((b) => b.status === 'cancelled').length,
+      last_visit: mine.filter((b) => ['seated', 'done'].includes(b.status)).map((b) => b.night).sort().pop() ?? null };
+  });
+
   class Query {
-    constructor(t) { this.t = t; this.filters = []; this.op = 'select'; this.mode = 'many'; this.orderBy = null; }
-    select() { return this; }
+    constructor(t) { this.t = t; this.filters = []; this.op = 'select'; this.mode = 'many'; this.orderBy = null; this.cols = '*'; this.lim = null; }
+    select(cols) { if (this.op === 'select' && cols) this.cols = cols; return this; }
     eq(k, v) { this.filters.push((r) => String(r[k]) === String(v)); return this; }
+    in(k, arr) { this.filters.push((r) => arr.map(String).includes(String(r[k]))); return this; }
+    gte(k, v) { this.filters.push((r) => r[k] >= v); return this; }
+    lte(k, v) { this.filters.push((r) => r[k] <= v); return this; }
+    is(k, v) { this.filters.push((r) => (r[k] ?? null) === v); return this; }
+    limit(n) { this.lim = n; return this; }
     order(k, o) { this.orderBy = [k, o?.ascending !== false]; return this; }
     single() { this.mode = 'single'; return this; }
     maybeSingle() { this.mode = 'maybe'; return this; }
@@ -48,13 +92,23 @@
     delete() { this.op = 'delete'; return this; }
     then(res, rej) { return this.exec().then(res, rej); }
     async exec() {
-      const rows = db[this.t];
+      const rows = this.t === 'guest_stats' ? guestStats() : db[this.t];
       let out;
-      if (this.op === 'insert') {
+      if (this.op === 'insert' && Array.isArray(this.payload)) {
+        out = this.payload.map((p) => ({ id: rows.length + 1, at: now(), user_id: session?.user.id, ...p }));
+        rows.push(...out);
+      } else if (this.op === 'insert') {
         const r = { id: uid(), ...this.payload };
+        if (this.t === 'booking_payments' || this.t === 'booking_items') {
+          Object.assign(r, { created_by: session.user.id, created_at: now() });
+          rows.push(r); recompute(r.booking_id);
+          return { data: [r], error: null };
+        }
         if (this.t === 'bookings') {
-          Object.assign(r, { paid: false, paid_at: null, paid_by: null, slip_path: null, status: r.status ?? 'booked', is_walk_in: !!r.is_walk_in, note: r.note ?? '', phone: r.phone ?? '',
+          Object.assign(r, { paid: false, paid_at: null, paid_by: null, slip_path: null, amount_paid: 0, reminded_at: r.reminded_at ?? null, confirmed_at: null,
+            extra_table_ids: r.extra_table_ids ?? [], status: r.status ?? 'booked', is_walk_in: !!r.is_walk_in, note: r.note ?? '', phone: r.phone ?? '',
             guest_name: r.guest_name ?? '', night: nightOf(r.start_at), created_by: session.user.id, updated_by: session.user.id });
+          linkGuest(r);
           logHistory(null, r);
         }
         if (this.t === 'layouts') Object.assign(r, { is_default: false, created_at: now() });
@@ -64,21 +118,29 @@
         out = rows.filter((r) => this.filters.every((f) => f(r)));
         for (const r of out) {
           const old = { ...r };
-          Object.assign(r, this.payload);
+          const { paid, amount_paid, ...rest } = this.payload;
+          Object.assign(r, this.t === 'bookings' ? rest : this.payload);
           if (this.t === 'bookings') {
             r.night = nightOf(r.start_at); r.updated_by = session.user.id;
-            if (r.paid !== old.paid) { r.paid_at = r.paid ? now() : null; r.paid_by = r.paid ? session.user.id : null; }
+            if (normPhone(r.phone) !== normPhone(old.phone)) linkGuest(r);
             logHistory(old, r);
+            if (String(r.table_id) !== String(old.table_id) || JSON.stringify(r.extra_table_ids) !== JSON.stringify(old.extra_table_ids)) recompute(r.id);
           }
         }
       } else if (this.op === 'delete') {
         out = rows.filter((r) => this.filters.every((f) => f(r)));
         db[this.t] = rows.filter((r) => !out.includes(r));
+        if (this.t === 'booking_payments' || this.t === 'booking_items') out.forEach((r) => recompute(r.booking_id));
       } else {
         out = rows.filter((r) => this.filters.every((f) => f(r)));
         if (this.orderBy) {
           const [k, asc] = this.orderBy;
           out = [...out].sort((a, b) => (a[k] > b[k] ? 1 : -1) * (asc ? 1 : -1));
+        }
+        if (this.lim != null) out = out.slice(0, this.lim);
+        if (this.t === 'bookings' && this.cols.includes('booking_payments')) {
+          out = out.map((b) => ({ ...b, booking_payments: db.booking_payments.filter((p) => p.booking_id === b.id),
+            booking_items: db.booking_items.filter((i) => i.booking_id === b.id), guest: db.guests.find((g) => g.id === b.guest_id) ?? null }));
         }
       }
       out = JSON.parse(JSON.stringify(out));
@@ -118,8 +180,11 @@
         db.day_layouts = db.day_layouts.filter((d) => d.night !== a.p_night);
         db.day_layouts.push({ night: a.p_night, layout_id: a.p_layout });
         for (const b of db.bookings) {
-          if (b.night === a.p_night && ['booked', 'seated'].includes(b.status) && a.p_mapping[b.table_id]) {
-            const old = { ...b }; b.table_id = a.p_mapping[b.table_id]; logHistory(old, b);
+          if (b.night === a.p_night && ['booked', 'seated'].includes(b.status) && [b.table_id, ...(b.extra_table_ids ?? [])].some((x) => a.p_mapping[x])) {
+            const old = { ...b };
+            b.table_id = a.p_mapping[b.table_id] ?? b.table_id;
+            b.extra_table_ids = (b.extra_table_ids ?? []).map((x) => a.p_mapping[x] ?? x);
+            logHistory(old, b);
           }
         }
         return { data: null, error: null };
@@ -142,7 +207,12 @@
         },
       }),
     },
-    channel() { return { on() { return this; }, subscribe() { return this; } }; },
+    channel() {
+      const ch = { handlers: [], on(_e, filter, cb) { this.handlers.push([filter.table, cb]); return this; }, subscribe(cb) { cb?.('SUBSCRIBED'); return this; } };
+      // Tests call window.__emit(table, payload) to simulate a change made on another device.
+      window.__emit = (table, payload) => ch.handlers.filter(([t]) => t === table).forEach(([, cb]) => cb(payload));
+      return ch;
+    },
     removeChannel() {},
   };
   window.supabase = { createClient: () => client };

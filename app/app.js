@@ -1,6 +1,11 @@
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import * as T from './time.js';
+import { log, configure as configureLog, installGlobalHandlers, recent as recentLogs, setDebug, isDebug, flush as flushLogs } from './log.js';
+import { dueOf, paidOf, payState, tableIdsOf } from './money.js';
+import { fill, paymentLine, lineShareUrl } from './share.js';
+import { summarizeRange, toCSV } from './reports.js';
+import { VERSION } from './version.js';
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -28,6 +33,11 @@ const ICON = {
   undo: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>',
   redo: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>',
   camera: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  send: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  check: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>',
+  trend: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>',
+  download: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
   warn: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
 };
 
@@ -55,11 +65,26 @@ const personName = (id) => S.profiles.find((p) => p.id === id)?.display_name ?? 
 const isTonight = () => S.night === T.nightOf(Date.now(), S.settings);
 const hhmm = (iso) => T.bkkParts(Date.parse(iso)).hhmm;
 const fmtNight = (d) => { const p = dayParts(d); return `${p.wd} ${p.day} ${p.mon}`; };
-const baht = (n) => `${Number(n).toLocaleString('en-US')}฿`;
-const priceOf = (b) => tableById(b.table_id)?.price ?? null;
-const needsPayment = (b) => priceOf(b) != null && b.status !== 'cancelled' && b.status !== 'no_show';
-const payPill = (b) => (b.paid ? `<span class="pill paid">${t('paid')}</span>`
-  : needsPayment(b) ? `<span class="pill unpaid">${t('unpaid')}</span>` : '');
+const baht = (n) => `${Number(n || 0).toLocaleString('en-US')}฿`;
+// Money for a booking, from its tables, items and payment rows.
+const dueOfB = (b) => dueOf(b, tableById, b.booking_items ?? []);
+const paidOfB = (b) => paidOf(b.booking_payments ?? []);
+const payStateOf = (b) => payState(dueOfB(b), paidOfB(b));
+const isOpen = (b) => b.status !== 'cancelled' && b.status !== 'no_show';
+const owes = (b) => isOpen(b) && dueOfB(b) > paidOfB(b);
+const needsPayment = (b) => isOpen(b) && dueOfB(b) > 0;
+function payPill(b) {
+  const st = payStateOf(b);
+  if (st === 'paid') return `<span class="pill paid">${t('paid')}</span>`;
+  if (!isOpen(b)) return '';
+  if (st === 'partial') return `<span class="pill partial">${t('deposit_paid')}</span>`;
+  if (st === 'unpaid') return `<span class="pill unpaid">${t('unpaid')}</span>`;
+  return '';
+}
+const tablesLabel = (b) => tableIdsOf(b).map((id) => tableById(id)?.label ?? '?').join('+');
+const guestTags = (b) => b.guest?.tags ?? [];
+const STAR = '<svg class="star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z" fill="currentColor"/></svg>';
+const tagPills = (tags) => tags.map((g) => `<span class="tag-pill tag-${esc(g)}">${g === 'vip' ? STAR : ''}${esc(t('tag_' + g) || g)}</span>`).join('');
 const tableLabel = (id) => { const x = tableById(id); return x ? `${x.label} · ${t('floor')} ${x.floor}` : '—'; };
 
 function atMs() {
@@ -71,7 +96,7 @@ function atMs() {
 const ERRORS = [
   'table_has_future_bookings', 'need_one_manager', 'unmapped_bookings', 'cannot_delete_default_layout',
   'invalid_status_change', 'table_not_in_night_layout', 'table_archived', 'forbidden',
-  'guest_name_required', 'phone_required', 'password_too_short', 'invalid_email',
+  'guest_name_required', 'phone_required', 'password_too_short', 'invalid_email', 'invalid_extra_tables', 'not_a_table',
 ];
 function errMsg(e) {
   const m = e?.message ?? String(e);
@@ -88,30 +113,48 @@ function toast(msg, bad = false) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => (el.className = 'toast'), 3500);
 }
-async function run(promise) {
+// Await a Supabase call; on failure log it (with what was attempted) and throw.
+async function run(promise, what = 'db') {
   const { data, error } = await promise;
-  if (error) throw error;
+  if (error) {
+    const known = ERRORS.some((c) => error.message?.includes(c));
+    log[known ? 'warn' : 'error'](`db.${what}`, { code: error.code, message: error.message, details: error.details, hint: error.hint });
+    throw error;
+  }
   return data;
 }
 
 // ───────── Data ─────────
 async function loadBase() {
-  const [s, l, tb, p] = await Promise.all([
-    run(sb.from('settings').select('*').single()),
-    run(sb.from('layouts').select('*').order('created_at')),
-    run(sb.from('tables').select('*')),
-    run(sb.from('profiles').select('*').order('created_at')),
+  const [s, l, tb, p, pr] = await Promise.all([
+    run(sb.from('settings').select('*').single(), 'load.settings'),
+    run(sb.from('layouts').select('*').order('created_at'), 'load.layouts'),
+    run(sb.from('tables').select('*'), 'load.tables'),
+    run(sb.from('profiles').select('*').order('created_at'), 'load.profiles'),
+    run(sb.from('products').select('*').order('created_at'), 'load.products'),
   ]);
-  S.settings = s; S.layouts = l; S.profiles = p;
+  S.settings = s; S.layouts = l; S.profiles = p; S.products = pr;
   S.tables = tb.map((x) => ({ ...x, x: Number(x.x), y: Number(x.y) }));
   if (!S.layouts.some((x) => x.id === S.editLayoutId)) S.editLayoutId = null;
 }
 async function loadNight() {
   const [d, b] = await Promise.all([
-    run(sb.from('day_layouts').select('*').eq('night', S.night).maybeSingle()),
-    run(sb.from('bookings').select('*').eq('night', S.night).order('start_at')),
+    run(sb.from('day_layouts').select('*').eq('night', S.night).maybeSingle(), 'load.day_layout'),
+    run(sb.from('bookings').select(BOOKING_SELECT).eq('night', S.night).order('start_at'), 'load.bookings'),
   ]);
   S.dayLayout = d; S.bookings = b;
+  await loadReminders();
+}
+const BOOKING_SELECT = '*, booking_payments(*), booking_items(*), guest:guests(*)';
+
+// Bookings for tonight and tomorrow that still need a reminder sent.
+async function loadReminders() {
+  const tonight = T.nightOf(Date.now(), S.settings);
+  try {
+    S.toRemind = await run(sb.from('bookings').select('id, night, start_at, guest_name, table_id, phone')
+      .in('night', [tonight, T.addDays(tonight, 1)]).eq('status', 'booked').is('reminded_at', null).is('confirmed_at', null)
+      .order('start_at'), 'load.reminders');
+  } catch { S.toRemind = []; }
 }
 async function reload() { await loadBase(); await loadNight(); render(); }
 
@@ -119,17 +162,23 @@ let channel = null, reloadTimer = null;
 function setupRealtime() {
   if (channel) return;
   channel = sb.channel('db');
-  for (const table of ['bookings', 'tables', 'layouts', 'day_layouts', 'settings']) {
-    channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+  for (const table of ['bookings', 'tables', 'layouts', 'day_layouts', 'settings', 'booking_payments', 'booking_items', 'guests', 'products']) {
+    channel.on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+      if (table === 'bookings') notifyFromChange(payload);
       clearTimeout(reloadTimer);
       reloadTimer = setTimeout(async () => {
         await loadBase(); await loadNight();
         const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName) && $('#app').contains(document.activeElement);
-        if (!drag && !typing) render();
+        if (!drag && !typing && !$('#modal:not([hidden])')) render();
+        refreshOpenBooking();
       }, 300);
     });
   }
-  channel.subscribe();
+  channel.subscribe((status, err) => {
+    S.realtime = status;
+    if (status === 'SUBSCRIBED') log.info('realtime.subscribed');
+    else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') log.warn('realtime.problem', { status, error: err });
+  });
 }
 function teardownRealtime() { if (channel) { sb.removeChannel(channel); channel = null; } }
 
@@ -137,18 +186,26 @@ function teardownRealtime() { if (channel) { sb.removeChannel(channel); channel 
 async function boot() {
   try {
     if (!S.user) { teardownRealtime(); S.me = null; return render(); }
-    S.me = await run(sb.from('profiles').select('*').eq('id', S.user.id).maybeSingle());
-    if (!S.me?.active) return render();
+    S.me = await run(sb.from('profiles').select('*').eq('id', S.user.id).maybeSingle(), 'load.me');
+    if (!S.me?.active) { log.warn('auth.inactive_account'); return render(); }
+    configureLog({ send: async (rows) => { const { error } = await sb.from('app_logs').insert(rows); if (error) throw error; } });
+    log.info('auth.ready', { role: S.me.role });
     await loadBase();
     if (!S.night) S.night = T.nightOf(Date.now(), S.settings);
     await loadNight();
     setupRealtime();
     render();
-  } catch (e) { toast(errMsg(e), true); render(); }
+  } catch (e) { log.error('boot.failed', e); toast(errMsg(e), true); render(); }
 }
 
 async function init() {
+  installGlobalHandlers();
+  configureLog({ version: VERSION });
+  log.info('app.start', { version: VERSION, debug: isDebug() });
   document.documentElement.lang = getLang();
+  window.addEventListener('online', () => { log.info('net.online'); toast(t('back_online')); });
+  window.addEventListener('offline', () => { log.warn('net.offline'); toast(t('offline'), true); });
+  setInterval(tick, 60000);
   const { data } = await sb.auth.getSession();
   S.user = data.session?.user ?? null;
   sb.auth.onAuthStateChange((_e, session) => {
@@ -167,7 +224,7 @@ function render() {
   if (!S.settings) { app.innerHTML = `<div class="center muted">${t('loading')}</div>`; return; }
   const body = {
     map: viewMap, list: viewList, summary: viewSummary,
-    layouts: viewLayouts, staff: viewStaff, settings: viewSettings,
+    layouts: viewLayouts, staff: viewStaff, settings: viewSettings, reports: viewReports,
   }[S.view]();
   app.innerHTML = `<div class="shell">${viewRail()}<div class="col">${viewTop()}<main>${body}</main></div>${
     S.view === 'map' ? `<aside class="side" aria-label="${t('tonight')}">${viewAside()}</aside>` : ''}</div>${viewBottomNav()}`;
@@ -215,7 +272,7 @@ const hasBottomNav = () => !window.matchMedia('(min-width: 768px)').matches;
 const NIGHT_VIEWS = ['map', 'list', 'summary'];
 function navItems() {
   const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart]];
-  if (isManager()) items.push(['layouts', 'tab_layouts', ICON.edit], ['staff', 'tab_staff', ICON.people], ['settings', 'tab_settings', ICON.gear]);
+  if (isManager()) items.push(['reports', 'tab_reports', ICON.trend], ['layouts', 'tab_layouts', ICON.edit], ['staff', 'tab_staff', ICON.people], ['settings', 'tab_settings', ICON.gear]);
   return items;
 }
 const navBtn = (v, k, ic, cls) =>
@@ -226,6 +283,7 @@ function viewRail() {
     <div class="rail-logo" aria-hidden="true">MT</div>
     ${navItems().map(([v, k, ic]) => navBtn(v, k, ic, 'rail-item')).join('')}
     <div class="grow"></div>
+    ${bellButton('rail-item')}
     <button class="rail-item" data-action="lang"><span class="lang-mark">${getLang() === 'th' ? 'EN' : 'TH'}</span><span>${t('language')}</span></button>
     <button class="rail-item" data-action="logout">${ICON.logout}<span>${t('logout')}</span></button>
   </nav>`;
@@ -259,7 +317,7 @@ function statsRow() {
   const total = tablesOf(nightLayoutId()).length;
   const seated = S.bookings.filter((b) => b.status === 'seated').length;
   const late = isTonight() ? S.bookings.filter((b) => T.isLate(b, now)).length : 0;
-  const unpaid = S.bookings.filter((b) => needsPayment(b) && !b.paid).length;
+  const unpaid = S.bookings.filter(owes).length;
   return `<div class="stats-row">
     <span class="chip"><b>${T.tablesBooked(S.bookings)}</b>/${total} ${t('tables_booked')}</span>
     <span class="chip"><b class="c-seated">${seated}</b> ${t('seated_now')}</span>
@@ -275,11 +333,11 @@ function viewTop() {
     ? `<select class="layout-pick" data-change="night-layout" aria-label="${t('night_layout')}">${S.layouts.map((l) =>
         `<option value="${l.id}" ${l.id === nightLayoutId() ? 'selected' : ''}>${t('layout')}: ${esc(l.name)}</option>`).join('')}</select>`
     : `<span class="eyebrow">${t('layout')}: ${esc(layoutName(nightLayoutId()))}</span>`;
-  if (!night) return `<header class="topbar"><h1 class="page-title">${t('tab_' + S.view)}</h1></header>`;
+  if (!night) return `<header class="topbar"><div class="row between"><h1 class="page-title">${t('tab_' + S.view)}</h1>${bellButton('phone-bell')}</div></header>`;
   return `<header class="topbar">
     <div class="row between wrap top-row">
       <div><div class="eyebrow">MUSIC TABLE</div><div class="night-title">${p.wd} ${p.day} ${p.mon}${isTonight() ? ` <span class="tag">${t('tonight')}</span>` : ''}</div></div>
-      ${layoutPicker}
+      <div class="row">${layoutPicker}${bellButton('phone-bell')}</div>
     </div>
     ${dateStrip()}
     ${statsRow()}
@@ -470,7 +528,7 @@ function upcomingRow(b) {
   return `<div class="up-row ${late ? 'late' : ''}">
     <button class="up-main" data-action="open-booking" data-id="${b.id}">
       <span class="time">${hhmm(b.start_at)}</span>
-      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tableById(b.table_id)?.label ?? '')} ${needsPayment(b) && !b.paid ? `<span class="pill unpaid">${t('unpaid')}</span>` : ''}</b>
+      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tablesLabel(b))} ${guestTags(b).includes('vip') ? STAR : ''} ${owes(b) ? payPill(b) : ''}</b>
         <span class="small-text">${late ? t('late_by').replace('{n}', Math.round((Date.now() - T.startMs(b)) / 60000)) + ' · ' : ''}${b.party_size} ${t('people')}${b.note ? ' · ' + esc(b.note) : ''}</span></span>
     </button>
     ${isTonight() ? `<button class="${late ? 'primary' : 'ghost'} small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button>` : ''}
@@ -481,7 +539,10 @@ function viewMap() {
   const tables = tablesOf(nightLayoutId(), S.floor);
   const slots = timeSlots();
   const up = T.upcoming(S.bookings, atMs());
+  const moving = S.moving && S.bookings.find((b) => b.id === S.moving);
   return `<section class="mapview">
+    ${moving ? `<div class="move-banner" role="status">${t('move_hint_tap').replace('{name}', esc(moving.guest_name || t('walk_in'))).replace('{table}', esc(tablesLabel(moving)))}
+      <button class="ghost small" data-action="move-cancel">${t('cancel')}</button></div>` : ''}
     <div class="row wrap between toolbar">
       <div class="seg" role="tablist">${[1, 2].map((f) =>
         `<button role="tab" aria-selected="${S.floor === f}" class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
@@ -548,8 +609,9 @@ function bookingRow(b) {
   const st = isTonight() && T.isLate(b, Date.now()) ? 'late' : b.status;
   return `<button class="brow st-${b.status}" data-action="open-booking" data-id="${b.id}">
     <span class="time">${hhmm(b.start_at)}</span>
-    <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong>
-      <span class="muted small-text"> ${esc(tableLabel(b.table_id))} · ${ICON.person} ${b.party_size}</span>
+    <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong> ${guestTags(b).includes('vip') ? STAR : ''}
+      <span class="muted small-text"> ${esc(tablesLabel(b))} · ${t('floor')} ${tableById(b.table_id)?.floor ?? ''} · ${ICON.person} ${b.party_size}</span>
+      ${b.confirmed_at ? `<span class="small-text c-ok">${ICON.check} ${t('confirmed')}</span>` : ''}
       ${b.note ? `<span class="muted small-text note">${esc(b.note)}</span>` : ''}</span>
     <span class="pills">${payPill(b)}<span class="pill st-${st}">${st === 'late' ? t('late') : t('st_' + b.status)}</span></span>
   </button>`;
@@ -559,7 +621,8 @@ const LIST_FILTERS = {
   all: () => true,
   coming: (b) => b.status === 'booked',
   seated: (b) => b.status === 'seated',
-  unpaid: (b) => needsPayment(b) && !b.paid,
+  unpaid: owes,
+  remind: (b) => b.status === 'booked' && !b.reminded_at && !b.confirmed_at && !!b.phone,
   closed: (b) => ['done', 'cancelled', 'no_show'].includes(b.status),
 };
 function filteredBookings() {
@@ -590,9 +653,9 @@ function viewList() {
 function viewSummary() {
   const s = T.summary(S.bookings);
   const card = (n, label) => `<div class="stat"><div class="num">${n}</div><div class="muted">${label}</div></div>`;
-  const priced = S.bookings.filter(needsPayment);
-  const got = priced.filter((b) => b.paid).reduce((n, b) => n + priceOf(b), 0);
-  const owed = priced.filter((b) => !b.paid).reduce((n, b) => n + priceOf(b), 0);
+  const priced = S.bookings.filter((b) => needsPayment(b) || paidOfB(b) > 0);
+  const got = S.bookings.reduce((n, b) => n + paidOfB(b), 0);
+  const owed = S.bookings.filter(owes).reduce((n, b) => n + dueOfB(b) - paidOfB(b), 0);
   return `<section>
     ${priced.length ? `<div class="stats money">
       ${card(baht(got), t('sum_paid'))}
@@ -729,7 +792,9 @@ function viewStaff() {
 
 function viewSettings() {
   const s = S.settings;
-  return `<section>
+  const notifyOn = deviceNotify();
+  return `<section class="settings">
+    <h2>${t('hours')}</h2>
     <form data-form="settings" class="panel stack">
       <div class="grid2">
         <label>${t('open_time')}<input name="open_time" type="time" value="${s.open_time.slice(0, 5)}" required></label>
@@ -739,7 +804,185 @@ function viewSettings() {
       <p class="muted small-text">${t('night_rule')}</p>
       <button class="primary" type="submit">${t('save')}</button>
     </form>
+
+    <h2>${t('messages')}</h2>
+    <form data-form="messages" class="panel stack">
+      <label>${t('shop_name')}<input name="shop_name" value="${esc(s.shop_name)}" maxlength="80" required></label>
+      <label>${t('confirm_template')}<textarea name="confirm_template" rows="6" maxlength="1000">${esc(s.confirm_template)}</textarea></label>
+      <label>${t('reminder_template')}<textarea name="reminder_template" rows="5" maxlength="1000">${esc(s.reminder_template)}</textarea></label>
+      <p class="muted small-text">${t('template_help')}</p>
+      <button class="primary" type="submit">${t('save')}</button>
+    </form>
+
+    <h2>${t('products')}</h2>
+    <div class="panel stack">
+      ${(S.products ?? []).map((p) => `<form data-form="product" class="product-row">
+        <input type="hidden" name="id" value="${p.id}">
+        <input name="name" value="${esc(p.name)}" maxlength="80" required aria-label="${t('name')}">
+        <input name="price" type="number" min="0" step="10" value="${p.price}" required aria-label="${t('price')}">
+        <label class="inline-label"><input type="checkbox" name="per_person" ${p.per_person ? 'checked' : ''}> ${t('per_person')}</label>
+        <label class="inline-label"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}> ${t('active')}</label>
+        <button class="small" type="submit">${t('save')}</button>
+      </form>`).join('')}
+      <form data-form="product" class="product-row">
+        <input name="name" maxlength="80" required placeholder="${t('new_product')}" aria-label="${t('new_product')}">
+        <input name="price" type="number" min="0" step="10" required placeholder="${t('price')}" aria-label="${t('price')}">
+        <label class="inline-label"><input type="checkbox" name="per_person"> ${t('per_person')}</label>
+        <input type="hidden" name="active" value="on">
+        <button class="primary small" type="submit">${ICON.plus} ${t('add')}</button>
+      </form>
+    </div>
+
+    <h2>${t('notifications')}</h2>
+    <div class="panel row wrap between">
+      <span>${t('device_notify')}<br><span class="muted small-text">${t('device_notify_help')}</span></span>
+      <button class="${notifyOn ? 'ghost' : 'primary'}" data-action="toggle-notify">${notifyOn ? t('turn_off') : t('turn_on')}</button>
+    </div>
+
+    <h2>${t('backup')}</h2>
+    <div class="panel stack">
+      <p class="muted small-text">${t('backup_help')}</p>
+      <div class="row wrap">
+        <button data-action="csv" data-kind="bookings" data-range="90">${ICON.download} ${t('csv_bookings')}</button>
+        <button data-action="csv" data-kind="payments" data-range="90">${ICON.download} ${t('csv_payments')}</button>
+        <button data-action="csv" data-kind="guests">${ICON.download} ${t('csv_guests')}</button>
+      </div>
+    </div>
+
+    <h2>${t('diagnostics')}</h2>
+    <div class="panel stack diag">
+      <dl class="facts">
+        <dt>${t('version')}</dt><dd>${esc(VERSION)}</dd>
+        <dt>${t('signed_in_as')}</dt><dd>${esc(S.me.email ?? S.me.display_name)} (${t('role_' + S.me.role)})</dd>
+        <dt>${t('connection')}</dt><dd>${navigator.onLine ? t('online') : t('offline')} · realtime ${esc(S.realtime ?? '—')}</dd>
+        <dt>${t('debug_mode')}</dt><dd>${isDebug() ? t('on') : t('off')}</dd>
+      </dl>
+      <div class="row wrap">
+        <button class="small" data-action="debug-toggle">${isDebug() ? t('debug_off') : t('debug_on')}</button>
+        <button class="small" data-action="diag-copy">${t('copy_diag')}</button>
+        <button class="small" data-action="server-logs">${t('server_logs')}</button>
+      </div>
+      <div class="sec-title">${t('recent_logs')}</div>
+      <div class="log-list">${recentLogs().slice(-40).reverse().map(logRow).join('') || '<span class="muted small-text">—</span>'}</div>
+      <div id="server-logs"></div>
+    </div>
   </section>`;
+}
+const logRow = (e) => `<div class="log-row lv-${e.level}"><span class="muted">${T.bkkParts(Date.parse(e.at)).hhmm}</span> <b>${e.level}</b> ${esc(e.event)}${e.message ? ` <span class="muted">${esc(e.message).slice(0, 160)}</span>` : ''}</div>`;
+
+// ───────── Reports (managers) ─────────
+const REPORT_RANGES = { 7: 'r_7', 30: 'r_30', month: 'r_month', last_month: 'r_last_month' };
+function reportRange(key) {
+  const today = T.nightOf(Date.now(), S.settings);
+  if (key === 'month') return [today.slice(0, 8) + '01', today];
+  if (key === 'last_month') {
+    const d = new Date(today.slice(0, 8) + '01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 1);
+    const from = d.toISOString().slice(0, 10);
+    const end = new Date(today.slice(0, 8) + '01T00:00:00Z'); end.setUTCDate(0);
+    return [from, end.toISOString().slice(0, 10)];
+  }
+  return [T.addDays(today, -(Number(key) - 1)), today];
+}
+async function loadReport() {
+  const [from, to] = reportRange(S.reportKey ?? '7');
+  S.report = { from, to, loading: true };
+  render();
+  try {
+    const rows = await run(sb.from('bookings').select(BOOKING_SELECT).gte('night', from).lte('night', to).order('start_at'), 'report.load');
+    S.report = { from, to, rows, sum: summarizeRange(rows, tableById) };
+    log.info('report.loaded', { from, to, n: rows.length });
+  } catch (e) { S.report = { from, to, error: errMsg(e) }; }
+  if (S.view === 'reports') render();
+}
+function viewReports() {
+  if (!S.report) { loadReport(); return `<p class="muted">${t('loading')}</p>`; }
+  const r = S.report;
+  const key = S.reportKey ?? '7';
+  const head = `<div class="filters">${Object.entries(REPORT_RANGES).map(([k, l]) =>
+    `<button class="fchip ${k === key ? 'on' : ''}" data-action="report-range" data-k="${k}">${t(l)}</button>`).join('')}</div>
+    <p class="muted small-text">${fmtNight(r.from)} – ${fmtNight(r.to)}</p>`;
+  if (r.loading) return `<section>${head}<p class="muted">${t('loading')}</p></section>`;
+  if (r.error) return `<section>${head}<p class="err">${esc(r.error)}</p></section>`;
+  const s = r.sum, tt = s.totals;
+  const card = (n, label, cls = '') => `<div class="stat ${cls}"><div class="num">${n}</div><div class="muted">${label}</div></div>`;
+  const maxC = Math.max(1, ...s.perNight.map((n) => n.collected));
+  const maxB = Math.max(1, ...s.perNight.map((n) => n.bookings));
+  return `<section>
+    ${head}
+    <div class="stats">
+      ${card(baht(tt.collected), t('sum_paid'), 'money-ok')}
+      ${card(baht(tt.outstanding), t('sum_owed'), 'money-owed')}
+      ${card(tt.bookings, t('sum_bookings'))}
+      ${card(tt.guests, t('sum_guests'))}
+      ${card(`${Math.round(tt.noShowRate * 100)}%`, t('no_show_rate') + ` (${tt.noShows})`)}
+      ${card(tt.cancelled, t('sum_cancelled'))}
+    </div>
+    <h3>${t('per_night')}</h3>
+    ${s.perNight.length ? `<div class="bars" role="table">${s.perNight.map((n) => `<div class="bar-row" role="row">
+      <span class="bar-label" role="cell">${fmtNight(n.night)}</span>
+      <span class="bar-track" role="cell" aria-label="${baht(n.collected)}"><i class="bar money" style="width:${(n.collected / maxC) * 100}%"></i></span>
+      <span class="bar-val" role="cell">${baht(n.collected)}</span>
+      <span class="bar-track thin" role="cell" aria-label="${n.bookings}"><i class="bar" style="width:${(n.bookings / maxB) * 100}%"></i></span>
+      <span class="bar-val" role="cell">${n.bookings} ${t('bookings_word')}</span>
+    </div>`).join('')}</div>` : `<p class="muted">${t('no_bookings')}</p>`}
+    <div class="grid2 report-cols">
+      <div><h3>${t('top_tables')}</h3>
+        ${s.topTables.map((x) => `<div class="pay-row"><span>${esc(x.label)}</span><b>${x.count}</b></div>`).join('') || '—'}</div>
+      <div><h3>${t('by_zone')}</h3>
+        ${s.tiers.map((x) => `<div class="pay-row"><span class="tier"><i style="background:${x.color}"></i>${x.price != null ? baht(x.price) : ''}</span><b>${x.count}</b></div>`).join('') || '—'}</div>
+    </div>
+    <div class="row wrap">
+      <button data-action="csv" data-kind="bookings" data-report="1">${ICON.download} ${t('csv_bookings')}</button>
+      <button data-action="csv" data-kind="payments" data-report="1">${ICON.download} ${t('csv_payments')}</button>
+    </div>
+  </section>`;
+}
+
+// ───────── CSV export (opens in Google Sheets: File → Import → Upload) ─────────
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function exportCSV(kind, fromReport, days) {
+  try {
+    let from, to, rows;
+    if (fromReport && S.report?.rows) ({ from, to, rows } = S.report);
+    else if (kind !== 'guests') {
+      to = T.addDays(T.nightOf(Date.now(), S.settings), 60); from = T.addDays(to, -(Number(days || 90) + 60));
+      rows = await run(sb.from('bookings').select(BOOKING_SELECT).gte('night', from).lte('night', to).order('start_at'), 'csv.load');
+    }
+    let csv;
+    if (kind === 'bookings') {
+      csv = toCSV(rows, [
+        { label: 'night', get: (b) => b.night }, { label: 'time', get: (b) => hhmm(b.start_at) },
+        { label: 'tables', get: tablesLabel }, { label: 'guest', get: (b) => b.guest_name }, { label: 'phone', get: (b) => b.phone },
+        { label: 'party', get: (b) => b.party_size }, { label: 'status', get: (b) => b.status }, { label: 'walk_in', get: (b) => b.is_walk_in },
+        { label: 'due', get: dueOfB }, { label: 'paid', get: paidOfB }, { label: 'note', get: (b) => b.note },
+        { label: 'tags', get: (b) => guestTags(b).join(' ') }, { label: 'created_by', get: (b) => personName(b.created_by) }, { label: 'id', get: (b) => b.id },
+      ]);
+    } else if (kind === 'payments') {
+      const pays = rows.flatMap((b) => (b.booking_payments ?? []).map((p) => ({ ...p, b })));
+      csv = toCSV(pays, [
+        { label: 'paid_at', get: (p) => stamp(p.created_at) }, { label: 'night', get: (p) => p.b.night }, { label: 'tables', get: (p) => tablesLabel(p.b) },
+        { label: 'guest', get: (p) => p.b.guest_name }, { label: 'amount', get: (p) => p.amount }, { label: 'method', get: (p) => p.method },
+        { label: 'slip', get: (p) => (p.slip_path ? 'yes' : '') }, { label: 'by', get: (p) => personName(p.created_by) }, { label: 'booking_id', get: (p) => p.booking_id },
+      ]);
+    } else {
+      const guests = await run(sb.from('guests').select('*').order('created_at'), 'csv.guests');
+      const stats = await run(sb.from('guest_stats').select('*'), 'csv.guest_stats');
+      const byId = new Map(stats.map((x) => [x.guest_id, x]));
+      csv = toCSV(guests, [
+        { label: 'name', get: (g) => g.name }, { label: 'phone', get: (g) => g.phone }, { label: 'tags', get: (g) => g.tags.join(' ') },
+        { label: 'visits', get: (g) => byId.get(g.id)?.visits ?? 0 }, { label: 'no_shows', get: (g) => byId.get(g.id)?.no_shows ?? 0 },
+        { label: 'last_visit', get: (g) => byId.get(g.id)?.last_visit ?? '' }, { label: 'note', get: (g) => g.note },
+      ]);
+    }
+    const name = `music-table-${kind}${from ? `-${from}_${to}` : ''}.csv`;
+    download(name, csv);
+    log.info('csv.exported', { kind, rows: csv.split('\r\n').length - 2 });
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 // ───────── Modals ─────────
@@ -754,7 +997,7 @@ function closeModal() { $('#modal').hidden = true; $('#modal').innerHTML = ''; }
 function openTable(id) {
   const tb = tableById(id);
   const ms = atMs();
-  const list = S.bookings.filter((b) => b.table_id === id);
+  const list = S.bookings.filter((b) => T.tablesOf(b).includes(id));
   const free = isTonight() && T.tableStateAt(id, S.bookings, Date.now()).state === 'free';
   openModal(`<h2>${esc(tb.label)} <span class="muted small-text">${t('floor')} ${tb.floor} · ${tb.seats} ${t('seats_short')}${tb.price != null ? ' · ' + baht(tb.price) : ''}</span></h2>
     <div class="list">${list.length ? list.map((b) => b.status === 'booked' && isTonight()
@@ -793,13 +1036,19 @@ function bookingForm(b, opts = {}) {
       <input type="hidden" name="walk" value="${walk ? '1' : ''}">
       <div class="grid2">
         <label>${t('name')}<input name="guest_name" value="${esc(b?.guest_name)}" ${walk ? '' : 'required'} maxlength="80"></label>
-        ${walk ? '' : `<label>${t('phone')}<input name="phone" type="tel" value="${esc(b?.phone)}" required maxlength="30"></label>`}
+        ${walk ? '' : `<label>${t('phone')}<input name="phone" type="tel" inputmode="tel" value="${esc(b?.phone)}" required maxlength="30" data-input="phone"></label>`}
         <label>${t('guests')}<input name="party_size" type="number" min="1" max="200" value="${b?.party_size ?? 2}" required></label>
         ${opts.walkIn ? '' : `<label>${t('time')}<select name="time" data-change="bk-time">${times.map((x) =>
           `<option ${x === time ? 'selected' : ''}>${x}</option>`).join('')}</select></label>`}
         <label>${t('duration_min')}<input name="duration_min" type="number" min="15" max="720" step="15" value="${b?.duration_min ?? S.settings.default_duration_min}" required></label>
         <label>${t('table')}<select name="table_id">${tableOptions(tables, tableId, busy)}</select></label>
       </div>
+      <div id="guest-hint"></div>
+      <details class="extra-tables" ${b?.extra_table_ids?.length ? 'open' : ''}>
+        <summary>${t('combine_tables')}${b?.extra_table_ids?.length ? ` (${b.extra_table_ids.length})` : ''}</summary>
+        <div class="check-grid">${tables.map((x) => `<label class="check"><input type="checkbox" name="extra" value="${x.id}" ${b?.extra_table_ids?.includes(x.id) ? 'checked' : ''}>
+          ${esc(x.label)}${busy(x) ? ` <span class="muted">· ${t('taken')}</span>` : ''}</label>`).join('')}</div>
+      </details>
       <label>${t('note')}<textarea name="note" rows="2" maxlength="500">${esc(b?.note)}</textarea></label>
       <div id="warnings"></div>
       <button class="primary" type="submit">${t('save')}</button>
@@ -807,7 +1056,8 @@ function bookingForm(b, opts = {}) {
 }
 
 async function saveBooking(form, confirmed) {
-  const f = Object.fromEntries(new FormData(form));
+  const fd = new FormData(form);
+  const f = Object.fromEntries(fd);
   const walk = !!f.walk;
   const existing = f.id ? S.bookings.find((b) => b.id === f.id) : null;
   const startMs = existing && !f.time ? T.startMs(existing)
@@ -821,6 +1071,7 @@ async function saveBooking(form, confirmed) {
     guest_name: (f.guest_name ?? '').trim(),
     phone: (f.phone ?? '').trim(),
     note: (f.note ?? '').trim(),
+    extra_table_ids: fd.getAll('extra').filter((x) => x !== f.table_id),
   };
   if (!confirmed) {
     const warns = [];
@@ -828,8 +1079,8 @@ async function saveBooking(form, confirmed) {
       warns.push(t('warn_overlap').replace('{name}', c.guest_name || t('walk_in'))
         .replace('{from}', hhmm(c.start_at)).replace('{to}', T.bkkParts(T.endMs(c)).hhmm));
     }
-    const tb = tableById(draft.table_id);
-    if (tb && draft.party_size > tb.seats) warns.push(t('warn_seats').replace('{n}', tb.seats));
+    const seats = T.tablesOf(draft).reduce((n, id) => n + (tableById(id)?.seats ?? 0), 0);
+    if (seats && draft.party_size > seats) warns.push(t('warn_seats').replace('{n}', seats));
     if (warns.length) {
       $('#warnings').innerHTML = `<div class="warn">${ICON.warn}<div>${warns.map((w) => `<div>${esc(w)}</div>`).join('')}
         <button type="button" class="primary small" data-action="confirm-save">${t('save_anyway')}</button></div></div>`;
@@ -838,10 +1089,12 @@ async function saveBooking(form, confirmed) {
   }
   try {
     if (existing) {
-      await run(sb.from('bookings').update(draft).eq('id', existing.id));
+      await run(sb.from('bookings').update(draft).eq('id', existing.id), 'booking.update');
+      log.info('booking.updated', { booking: existing.id, tables: T.tablesOf(draft).length });
     } else {
       delete draft.id;
-      await run(sb.from('bookings').insert(walk ? { ...draft, is_walk_in: true, status: 'seated' } : draft));
+      await run(sb.from('bookings').insert(walk ? { ...draft, is_walk_in: true, status: 'seated' } : draft), 'booking.insert');
+      log.info('booking.created', { walk_in: walk, tables: T.tablesOf(draft).length, party: draft.party_size });
     }
     closeModal();
     toast(t('saved'));
@@ -849,68 +1102,155 @@ async function saveBooking(form, confirmed) {
   } catch (e) { toast(errMsg(e), true); }
 }
 
+// ───────── Booking detail ─────────
+let openBookingId = null;
 async function openBooking(id) {
   const b = S.bookings.find((x) => x.id === id);
   if (!b) return;
+  openBookingId = id;
   const next = T.NEXT_STATUS[b.status];
   const label = { seated: t('act_seat'), cancelled: t('act_cancel'), no_show: t('act_noshow'), done: t('act_done') };
   const late = isTonight() && T.isLate(b, Date.now());
-  openModal(`<h2>${esc(b.guest_name || t('walk_in'))} <span class="pill st-${late ? 'late' : b.status}">${late ? t('late') : t('st_' + b.status)}</span></h2>
+  openModal(`<div data-booking="${b.id}">
+    <h2>${esc(b.guest_name || t('walk_in'))} <span class="pill st-${late ? 'late' : b.status}">${late ? t('late') : t('st_' + b.status)}</span>
+      ${b.confirmed_at ? `<span class="pill paid">${t('confirmed')}</span>` : ''}</h2>
     <dl class="facts">
-      <dt>${t('time')}</dt><dd>${fmtNight(S.night)} · ${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}</dd>
-      <dt>${t('table')}</dt><dd>${esc(tableLabel(b.table_id))}</dd>
+      <dt>${t('time')}</dt><dd>${fmtNight(b.night)} · ${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}</dd>
+      <dt>${t('table')}</dt><dd>${esc(tablesLabel(b))} · ${t('floor')} ${tableById(b.table_id)?.floor ?? ''}</dd>
       <dt>${t('guests')}</dt><dd>${b.party_size}</dd>
       ${b.phone ? `<dt>${t('phone')}</dt><dd><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a></dd>` : ''}
       ${b.note ? `<dt>${t('note')}</dt><dd>${esc(b.note)}</dd>` : ''}
       <dt>${t('created_by')}</dt><dd>${esc(personName(b.created_by))}</dd>
-      <dt>${t('updated_by')}</dt><dd>${esc(personName(b.updated_by))}</dd>
     </dl>
-    ${paymentSection(b)}
     <div class="row wrap">
-      ${next.map((s) => `<button class="${s === 'seated' || s === 'done' ? 'primary' : s === 'cancelled' || s === 'no_show' ? 'ghost danger' : ''}" data-action="set-status" data-id="${b.id}" data-s="${s}">${label[s]}</button>`).join('')}
-      ${T.isActive(b) ? `<button class="ghost" data-action="edit-booking" data-id="${b.id}">${t('edit')}</button>` : ''}
+      ${next.map((s) => `<button class="${s === 'seated' || s === 'done' ? 'primary' : 'ghost danger'}" data-action="set-status" data-id="${b.id}" data-s="${s}">${label[s]}</button>`).join('')}
+      ${T.isActive(b) ? `<button class="ghost" data-action="edit-booking" data-id="${b.id}">${t('edit')}</button>
+        <button class="ghost" data-action="move-start" data-id="${b.id}">${t('move_table')}</button>` : ''}
     </div>
+    ${b.guest ? guestSection(b) : ''}
+    ${b.phone && T.isActive(b) ? messageSection(b) : ''}
+    ${paymentSection(b)}
+    ${itemsSection(b)}
     <h3>${t('history')}</h3>
-    <div id="history" class="muted">${t('loading')}</div>`);
+    <div id="history" class="muted">${t('loading')}</div>
+  </div>`);
+  loadSlips(b);
+  loadGuestStats(b);
   try {
-    const rows = await run(sb.from('booking_history').select('*').eq('booking_id', id).order('changed_at', { ascending: false }));
+    const rows = await run(sb.from('booking_history').select('*').eq('booking_id', id).order('changed_at', { ascending: false }), 'load.history');
     const el = $('#history');
     if (el) el.innerHTML = rows.map(historyRow).join('') || '—';
   } catch (e) { toast(errMsg(e), true); }
-  loadSlip(b);
 }
+// Re-draw an open booking after realtime changes (keeps the sheet in sync with other devices).
+function refreshOpenBooking() {
+  const el = $('#modal [data-booking]');
+  if (el && openBookingId && S.bookings.some((b) => b.id === openBookingId)) openBooking(openBookingId);
+}
+async function reopen(id) { await loadNight(); render(); openBooking(id); }
 
-function paymentSection(b) {
-  const price = priceOf(b);
-  if (price == null && !b.paid && !b.slip_path) {
-    return `<div class="pay-box quiet"><span class="muted small-text">${t('payment')}</span>
-      <button class="ghost small" data-action="mark-paid" data-id="${b.id}">${t('mark_paid')}</button></div>`;
-  }
-  return `<div class="pay-box ${b.paid ? 'is-paid' : 'is-unpaid'}">
-    <div class="row between wrap">
-      <div><div class="muted small-text">${t('payment')}${price != null ? ` · ${t('amount_due')}` : ''}</div>
-        <div class="pay-amount">${price != null ? baht(price) : '—'} ${b.paid ? `<span class="pill paid">${t('paid')}</span>` : `<span class="pill unpaid">${t('unpaid')}</span>`}</div>
-        ${b.paid && b.paid_at ? `<div class="muted small-text">${t('paid_by')} ${esc(personName(b.paid_by))} · ${T.bkkParts(Date.parse(b.paid_at)).date} ${T.bkkParts(Date.parse(b.paid_at)).hhmm}</div>` : ''}
-      </div>
-      <div class="row wrap">
-        <label class="btn-file ${b.paid ? '' : 'primary'}">${ICON.camera}<span>${b.slip_path ? t('replace_slip') : t('attach_slip')}</span>
-          <input type="file" accept="image/*" data-change="slip" data-id="${b.id}"></label>
-        ${b.paid ? `<button class="ghost small danger" data-action="mark-unpaid" data-id="${b.id}">${t('mark_unpaid')}</button>`
-          : `<button class="ghost small" data-action="mark-paid" data-id="${b.id}">${t('mark_paid_no_slip')}</button>`}
-      </div>
-    </div>
-    ${b.slip_path ? `<a id="slip-link" class="slip" target="_blank" rel="noopener"><img id="slip-img" alt="${t('slip')}"></a>` : ''}
+// Guest card: tags + visit history.
+const GUEST_TAGS = ['vip', 'regular', 'birthday', 'caution'];
+function guestSection(b) {
+  const g = b.guest;
+  return `<div class="card guest-card">
+    <div class="row between wrap"><b>${t('guest')}</b><span id="guest-stats" class="muted small-text"></span></div>
+    <div class="row wrap tag-row">${GUEST_TAGS.map((k) => `<button class="tag-toggle ${g.tags.includes(k) ? 'on' : ''}" data-action="guest-tag" data-gid="${g.id}" data-tag="${k}" aria-pressed="${g.tags.includes(k)}">${k === 'vip' ? STAR : ''}${t('tag_' + k)}</button>`).join('')}</div>
   </div>`;
 }
-
-async function loadSlip(b) {
-  if (!b.slip_path) return;
+async function loadGuestStats(b) {
+  if (!b.guest) return;
   try {
-    const { data, error } = await sb.storage.from('slips').createSignedUrl(b.slip_path, 3600);
-    if (error) throw error;
-    const img = $('#slip-img'), link = $('#slip-link');
-    if (img) { img.src = data.signedUrl; link.href = data.signedUrl; }
-  } catch (e) { toast(errMsg(e), true); }
+    const st = await run(sb.from('guest_stats').select('*').eq('guest_id', b.guest.id).maybeSingle(), 'load.guest_stats');
+    const el = $('#guest-stats');
+    if (el && st) el.textContent = t('guest_stats').replace('{v}', st.visits).replace('{n}', st.no_shows) + (st.last_visit ? ' · ' + t('last_visit') + ' ' + fmtNight(st.last_visit) : '');
+  } catch { /* logged in run() */ }
+}
+
+// LINE messages: the app prepares the text; staff send it in LINE themselves.
+function messageSection(b) {
+  return `<div class="card msg-card">
+    <div class="row between wrap">
+      <b>${t('messages')}</b>
+      <span class="muted small-text">${b.confirmed_at ? t('confirmed_at').replace('{t}', stamp(b.confirmed_at))
+        : b.reminded_at ? t('reminded_at').replace('{t}', stamp(b.reminded_at)) : t('not_reminded')}</span>
+    </div>
+    <div class="row wrap">
+      <button class="small" data-action="share" data-id="${b.id}" data-kind="confirm">${ICON.send} ${t('send_confirm')}</button>
+      <button class="small" data-action="share" data-id="${b.id}" data-kind="reminder">${ICON.send} ${t('send_reminder')}</button>
+      ${b.confirmed_at ? `<button class="ghost small" data-action="mark-confirmed" data-id="${b.id}" data-v="0">${t('undo_confirm')}</button>`
+        : `<button class="ghost small" data-action="mark-confirmed" data-id="${b.id}" data-v="1">${t('guest_confirmed')}</button>`}
+    </div>
+  </div>`;
+}
+const stamp = (iso) => { const p = T.bkkParts(Date.parse(iso)); return `${fmtNight(p.date)} ${p.hhmm}`; };
+function messageText(b, kind) {
+  const s = S.settings;
+  const due = dueOfB(b), paid = paidOfB(b);
+  return fill(kind === 'confirm' ? s.confirm_template : s.reminder_template, {
+    name: b.guest_name, shop: s.shop_name, table: tablesLabel(b), date: fmtNight(b.night),
+    time: hhmm(b.start_at), guests: b.party_size, payment: paymentLine(due, paid, getLang()),
+    amount: due ? baht(due) : '', remaining: due ? baht(Math.max(0, due - paid)) : '',
+  });
+}
+function openShare(id, kind) {
+  const b = S.bookings.find((x) => x.id === id) ?? null;
+  if (!b) return;
+  const text = messageText(b, kind);
+  openModal(`<h2>${kind === 'confirm' ? t('send_confirm') : t('send_reminder')}</h2>
+    <p class="muted small-text">${t('share_hint')}</p>
+    <textarea id="share-text" rows="8">${esc(text)}</textarea>
+    <div class="row wrap">
+      <a class="btn primary" id="share-line" href="${lineShareUrl(text)}" target="_blank" rel="noopener" data-action="share-line" data-id="${b.id}">${ICON.send} ${t('open_line')}</a>
+      <button data-action="share-copy" data-id="${b.id}">${t('copy')}</button>
+      ${navigator.share ? `<button data-action="share-native" data-id="${b.id}">${t('share_other')}</button>` : ''}
+    </div>
+    <div class="row wrap">
+      <button class="ghost" data-action="mark-reminded" data-id="${b.id}">${t('mark_sent')}</button>
+      <button class="ghost" data-action="back-to-booking" data-id="${b.id}">${t('back')}</button>
+    </div>`);
+  $('#share-text').addEventListener('input', (e) => { $('#share-line').href = lineShareUrl(e.target.value); });
+  log.info('share.open', { kind, booking: id });
+}
+
+// Payments: deposits, partial and full, each with an optional slip photo.
+function paymentSection(b) {
+  const due = dueOfB(b), paid = paidOfB(b), left = Math.max(0, due - paid);
+  const st = payState(due, paid);
+  const pays = [...(b.booking_payments ?? [])].sort((x, y) => x.created_at.localeCompare(y.created_at));
+  return `<div class="pay-box is-${st}">
+    <div class="row between wrap">
+      <div>
+        <div class="muted small-text">${t('payment')}</div>
+        <div class="pay-amount">${due ? baht(due) : '—'} ${payPill(b) || ''}</div>
+        ${due ? `<div class="muted small-text">${t('paid_so_far')} ${baht(paid)} · ${t('remaining')} <b class="${left ? 'c-owed' : ''}">${baht(left)}</b></div>` : ''}
+      </div>
+    </div>
+    ${pays.length ? `<div class="pay-list">${pays.map((p) => `<div class="pay-row">
+      <span class="grow"><b>${baht(p.amount)}</b> · ${t('m_' + p.method)}
+        <span class="muted small-text pay-meta">${esc(personName(p.created_by))} · ${stamp(p.created_at)}</span></span>
+      ${p.slip_path ? `<a class="slip-thumb" data-slip="${esc(p.slip_path)}" target="_blank" rel="noopener"><img alt="${t('slip')}"></a>` : ''}
+      ${isManager() ? `<button class="icon small-icon" data-action="pay-delete" data-id="${p.id}" data-bid="${b.id}" aria-label="${t('delete')}">${ICON.close}</button>` : ''}
+    </div>`).join('')}</div>` : ''}
+    <form data-form="payment" class="pay-form">
+      <input type="hidden" name="booking_id" value="${b.id}">
+      <label>${t('amount')}<input name="amount" type="number" inputmode="numeric" min="1" step="1" value="${left || ''}" required></label>
+      <label>${t('method')}<select name="method">
+        <option value="transfer">${t('m_transfer')}</option><option value="cash">${t('m_cash')}</option><option value="card">${t('m_card')}</option>
+      </select></label>
+      <label class="btn-file">${ICON.camera}<span id="slip-name">${t('attach_slip')}</span><input type="file" name="slip" accept="image/*" data-change="slip-pick"></label>
+      <button class="primary" type="submit">${t('record_payment')}</button>
+    </form>
+  </div>`;
+}
+async function loadSlips() {
+  for (const a of document.querySelectorAll('#modal [data-slip]')) {
+    try {
+      const { data, error } = await sb.storage.from('slips').createSignedUrl(a.dataset.slip, 3600);
+      if (error) throw error;
+      a.href = data.signedUrl; a.querySelector('img').src = data.signedUrl;
+    } catch (e) { log.warn('slip.signed_url_failed', e); }
+  }
 }
 
 // Shrink a photo to at most 1600px JPEG so uploads stay small on mobile data.
@@ -931,24 +1271,145 @@ function compressImage(file) {
   });
 }
 
-async function uploadSlip(bookingId, file) {
-  toast(t('uploading'));
+async function savePayment(form) {
+  const v = Object.fromEntries(new FormData(form));
+  const id = v.booking_id, amount = Math.round(Number(v.amount));
+  if (!(amount > 0)) return toast(t('err_amount'), true);
+  const file = form.slip.files?.[0];
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true;
   try {
-    const blob = await compressImage(file);
-    const path = `${bookingId}/slip-${Date.now()}.jpg`;
-    const { error } = await sb.storage.from('slips').upload(path, blob, { contentType: 'image/jpeg' });
-    if (error) throw error;
-    await run(sb.from('bookings').update({ paid: true, slip_path: path }).eq('id', bookingId));
+    let slip_path = null;
+    if (file) {
+      toast(t('uploading'));
+      const blob = await compressImage(file);
+      slip_path = `${id}/slip-${Date.now()}.jpg`;
+      const { error } = await sb.storage.from('slips').upload(slip_path, blob, { contentType: 'image/jpeg' });
+      if (error) { log.error('slip.upload_failed', { code: error.statusCode, message: error.message }); throw error; }
+    }
+    await run(sb.from('booking_payments').insert({ booking_id: id, amount, method: v.method, slip_path }), 'payment.insert');
+    log.info('payment.recorded', { booking: id, amount, method: v.method, slip: !!slip_path });
     toast(t('saved'));
-    await loadNight(); render(); openBooking(bookingId);
+    await reopen(id);
+  } catch (e) { btn.disabled = false; toast(errMsg(e), true); }
+}
+
+// Extras: packages / bottles added to a booking.
+function itemsSection(b) {
+  const items = b.booking_items ?? [];
+  const products = (S.products ?? []).filter((p) => p.active);
+  return `<div class="card items-card">
+    <b>${t('extras')}</b>
+    ${items.length ? `<div class="pay-list">${items.map((i) => `<div class="pay-row">
+      <span class="grow">${esc(i.name)} × ${i.qty}</span><span><b>${baht(i.unit_price * i.qty)}</b></span>
+      <button class="icon small-icon" data-action="item-delete" data-id="${i.id}" data-bid="${b.id}" aria-label="${t('delete')}">${ICON.close}</button>
+    </div>`).join('')}</div>` : ''}
+    ${products.length ? `<form data-form="item" class="pay-form">
+      <input type="hidden" name="booking_id" value="${b.id}">
+      <label class="grow">${t('product')}<select name="product_id" data-change="product-pick">${products.map((p) =>
+        `<option value="${p.id}" data-pp="${p.per_person ? 1 : 0}">${esc(p.name)} · ${baht(p.price)}${p.per_person ? ' / ' + t('per_person') : ''}</option>`).join('')}</select></label>
+      <label>${t('qty')}<input name="qty" type="number" min="1" max="500" value="${products[0]?.per_person ? b.party_size : 1}" required></label>
+      <button type="submit">${ICON.plus} ${t('add')}</button>
+    </form>` : `<p class="muted small-text">${t('no_products')}</p>`}
+  </div>`;
+}
+async function saveItem(form) {
+  const v = Object.fromEntries(new FormData(form));
+  const p = S.products.find((x) => x.id === v.product_id);
+  if (!p) return;
+  try {
+    await run(sb.from('booking_items').insert({ booking_id: v.booking_id, product_id: p.id, name: p.name, unit_price: p.price, qty: Number(v.qty) }), 'item.insert');
+    log.info('item.added', { booking: v.booking_id, product: p.id, qty: Number(v.qty) });
+    await reopen(v.booking_id);
   } catch (e) { toast(errMsg(e), true); }
 }
 
-async function setPaid(id, paid) {
+// ───────── Move a booking to another table (tap the new table on the map) ─────────
+function startMove(id) {
+  const b = S.bookings.find((x) => x.id === id);
+  if (!b) return;
+  closeModal();
+  S.moving = id;
+  S.view = 'map';
+  S.floor = tableById(b.table_id)?.floor ?? S.floor;
+  S.selTable = null;
+  render();
+}
+async function finishMove(tableId) {
+  const b = S.bookings.find((x) => x.id === S.moving);
+  S.moving = null;
+  if (!b || tableId === b.table_id) return render();
+  const draft = { ...b, table_id: tableId, extra_table_ids: (b.extra_table_ids ?? []).filter((x) => x !== tableId) };
+  const clash = T.conflictsFor(draft, S.bookings);
+  if (clash.length && !confirm(t('move_clash').replace('{name}', clash[0].guest_name || t('walk_in')).replace('{time}', hhmm(clash[0].start_at)))) return render();
   try {
-    await run(sb.from('bookings').update({ paid }).eq('id', id));
-    toast(t('saved')); await loadNight(); render(); openBooking(id);
-  } catch (e) { toast(errMsg(e), true); }
+    await run(sb.from('bookings').update({ table_id: draft.table_id, extra_table_ids: draft.extra_table_ids }).eq('id', b.id), 'booking.move');
+    log.info('booking.moved', { booking: b.id, from: b.table_id, to: tableId });
+    toast(t('moved_to').replace('{t}', tableById(tableId)?.label ?? ''));
+    await loadNight(); render();
+  } catch (e) { toast(errMsg(e), true); render(); }
+}
+
+// ───────── Notifications (in-app, optionally also on the device) ─────────
+const notesSeen = new Set();
+function addNote(kind, text, bookingId) {
+  const key = `${kind}:${bookingId}`;
+  if (notesSeen.has(key)) return;
+  notesSeen.add(key);
+  S.notes = [{ id: key, at: Date.now(), kind, text, bookingId, read: false }, ...(S.notes ?? [])].slice(0, 50);
+  toast(text);
+  if (deviceNotify() && document.visibilityState !== 'visible') {
+    try { new Notification('Music Table', { body: text, tag: key }); } catch (e) { log.warn('notify.device_failed', e); }
+  }
+  updateBell();
+}
+const deviceNotify = () => { try { return localStorage.getItem('mt_notify') === '1' && 'Notification' in window && Notification.permission === 'granted'; } catch { return false; } };
+function notifyFromChange(payload) {
+  const n = payload.new ?? {}, o = payload.old ?? {};
+  if (!S.me || n.night !== S.night && n.night !== T.nightOf(Date.now(), S.settings)) return;
+  const who = n.guest_name || t('walk_in');
+  const tb = tableById(n.table_id)?.label ?? '';
+  if (payload.eventType === 'INSERT' && n.created_by !== S.me.id) addNote('new', t('n_new').replace('{name}', who).replace('{table}', tb).replace('{time}', hhmm(n.start_at)), n.id);
+  if (payload.eventType === 'UPDATE' && o.status !== n.status && n.updated_by !== S.me.id) {
+    if (n.status === 'cancelled') addNote('cancel', t('n_cancel').replace('{name}', who).replace('{table}', tb), n.id);
+    if (n.status === 'seated') addNote('seated', t('n_seated').replace('{name}', who).replace('{table}', tb), n.id);
+  }
+}
+// Runs every minute: late arrivals become notifications and the map moves with the clock.
+function tick() {
+  if (!S.me?.active || !S.settings) return;
+  const now = Date.now();
+  if (isTonight()) {
+    for (const b of S.bookings) {
+      if (T.isLate(b, now)) addNote('late', t('n_late').replace('{name}', b.guest_name || t('walk_in')).replace('{table}', tablesLabel(b)).replace('{n}', Math.round((now - T.startMs(b)) / 60000)), b.id);
+    }
+  }
+  const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+  if (S.view === 'map' && !drag && !typing && $('#modal').hidden) render();
+}
+const unreadCount = () => (S.notes ?? []).filter((n) => !n.read).length + (S.toRemind?.length ?? 0);
+function bellButton(cls = '') {
+  const n = unreadCount();
+  return `<button class="bell ${cls}" data-action="notes" aria-label="${t('notifications')}">${ICON.bell}${n ? `<span class="badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+}
+function updateBell() {
+  for (const el of document.querySelectorAll('.bell')) el.outerHTML = bellButton(el.classList.contains('rail-item') ? 'rail-item' : '');
+}
+function openNotes() {
+  const rem = S.toRemind ?? [];
+  const tonight = T.nightOf(Date.now(), S.settings);
+  openModal(`<h2>${t('notifications')}</h2>
+    ${rem.length ? `<div class="sec-title">${t('to_remind')} (${rem.length})</div>
+      <div class="list">${rem.map((b) => `<button class="brow" data-action="remind-open" data-id="${b.id}" data-night="${b.night}">
+        <span class="time">${hhmm(b.start_at)}</span>
+        <span class="grow"><strong>${esc(b.guest_name)}</strong> <span class="muted small-text">${b.night === tonight ? t('tonight') : t('tomorrow')} · ${esc(tableById(b.table_id)?.label ?? '')}</span></span>
+        <span class="pill unpaid">${t('send_reminder')}</span></button>`).join('')}</div>` : ''}
+    <div class="sec-title">${t('recent')}</div>
+    ${(S.notes ?? []).length ? `<div class="list">${S.notes.map((n) => `<button class="brow note-${n.kind}" data-action="note-open" data-id="${n.bookingId}">
+      <span class="time">${T.bkkParts(n.at).hhmm}</span><span class="grow">${esc(n.text)}</span></button>`).join('')}</div>`
+      : `<p class="muted small-text">${t('no_notes')}</p>`}`);
+  for (const n of S.notes ?? []) n.read = true;
+  updateBell();
 }
 
 const FIELDS = ['status', 'paid', 'slip_path', 'table_id', 'start_at', 'duration_min', 'party_size', 'guest_name', 'phone', 'note'];
@@ -973,9 +1434,9 @@ function historyRow(h) {
 }
 
 async function changeNightLayout(newId) {
-  const affected = S.bookings.filter((b) => T.isActive(b) && tableById(b.table_id)?.layout_id !== newId);
+  const affected = S.bookings.filter((b) => T.isActive(b) && T.tablesOf(b).some((id) => tableById(id)?.layout_id !== newId));
   if (!affected.length) return applyNightLayout(newId, {});
-  const oldIds = [...new Set(affected.map((b) => b.table_id))];
+  const oldIds = [...new Set(affected.flatMap(T.tablesOf))].filter((id) => tableById(id)?.layout_id !== newId);
   const newTables = tablesOf(newId);
   openModal(`<h2>${t('move_title')}</h2>
     <p class="muted">${t('move_hint').replace('{layout}', esc(layoutName(newId)))}</p>
@@ -983,7 +1444,7 @@ async function changeNightLayout(newId) {
       <input type="hidden" name="__layout" value="${newId}">
       ${oldIds.map((oid) => {
         const old = tableById(oid);
-        const names = affected.filter((b) => b.table_id === oid).map((b) => `${hhmm(b.start_at)} ${b.guest_name || t('walk_in')}`).join(', ');
+        const names = affected.filter((b) => T.tablesOf(b).includes(oid)).map((b) => `${hhmm(b.start_at)} ${b.guest_name || t('walk_in')}`).join(', ');
         const same = newTables.find((x) => x.label === old.label);
         return `<label>${esc(old.label)} <span class="muted small-text">(${esc(names)})</span>
           <select name="${oid}" required><option value="">—</option>${newTables.map((x) =>
@@ -1022,8 +1483,83 @@ const actions = {
   'close-modal'() { closeModal(); },
   more() { moreSheet(); },
   filter(el) { S.filter = el.dataset.f; render(); },
-  'mark-paid'(el) { return setPaid(el.dataset.id, true); },
-  'mark-unpaid'(el) { if (confirm(t('confirm_unpaid'))) return setPaid(el.dataset.id, false); },
+  share(el) { openShare(el.dataset.id, el.dataset.kind); },
+  'share-line'(el) { log.info('share.line', { booking: el.dataset.id }); },
+  async 'share-copy'(el) {
+    try { await navigator.clipboard.writeText($('#share-text').value); toast(t('copied')); }
+    catch (e) { $('#share-text').select(); log.warn('share.copy_failed', e); toast(t('copy_manual'), true); }
+    void el;
+  },
+  async 'share-native'() {
+    try { await navigator.share({ text: $('#share-text').value }); } catch (e) { if (e?.name !== 'AbortError') log.warn('share.native_failed', e); }
+  },
+  async 'mark-reminded'(el) {
+    try {
+      await run(sb.from('bookings').update({ reminded_at: new Date().toISOString() }).eq('id', el.dataset.id), 'booking.reminded');
+      toast(t('saved')); await reopen(el.dataset.id);
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  'back-to-booking'(el) { openBooking(el.dataset.id); },
+  async 'mark-confirmed'(el) {
+    try {
+      await run(sb.from('bookings').update({ confirmed_at: el.dataset.v === '1' ? new Date().toISOString() : null }).eq('id', el.dataset.id), 'booking.confirmed');
+      await reopen(el.dataset.id);
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  async 'guest-tag'(el) {
+    const b = S.bookings.find((x) => x.guest?.id === el.dataset.gid);
+    if (!b) return;
+    const tags = new Set(b.guest.tags);
+    tags.has(el.dataset.tag) ? tags.delete(el.dataset.tag) : tags.add(el.dataset.tag);
+    try { await run(sb.from('guests').update({ tags: [...tags] }).eq('id', el.dataset.gid), 'guest.tags'); await reopen(b.id); }
+    catch (e) { toast(errMsg(e), true); }
+  },
+  async 'pay-delete'(el) {
+    if (!confirm(t('confirm_delete_payment'))) return;
+    try { await run(sb.from('booking_payments').delete().eq('id', el.dataset.id), 'payment.delete'); log.warn('payment.deleted', { payment: el.dataset.id, booking: el.dataset.bid }); await reopen(el.dataset.bid); }
+    catch (e) { toast(errMsg(e), true); }
+  },
+  async 'item-delete'(el) {
+    try { await run(sb.from('booking_items').delete().eq('id', el.dataset.id), 'item.delete'); await reopen(el.dataset.bid); }
+    catch (e) { toast(errMsg(e), true); }
+  },
+  'move-start'(el) { startMove(el.dataset.id); },
+  'move-cancel'() { S.moving = null; render(); },
+  notes() { openNotes(); },
+  'report-range'(el) { S.reportKey = el.dataset.k; S.report = null; render(); },
+  csv(el) { exportCSV(el.dataset.kind, !!el.dataset.report, el.dataset.range); },
+  async 'toggle-notify'() {
+    try {
+      if (deviceNotify()) { localStorage.removeItem('mt_notify'); }
+      else {
+        const perm = 'Notification' in window ? await Notification.requestPermission() : 'denied';
+        if (perm === 'granted') localStorage.setItem('mt_notify', '1');
+        else toast(t('notify_denied'), true);
+        log.info('notify.permission', { perm });
+      }
+    } catch (e) { log.warn('notify.toggle_failed', e); }
+    render();
+  },
+  'debug-toggle'() { setDebug(!isDebug()); log.info('debug.toggled', { on: isDebug() }); render(); },
+  async 'diag-copy'() {
+    const info = { version: VERSION, at: new Date().toISOString(), user: S.me?.id, role: S.me?.role, view: S.view, night: S.night,
+      online: navigator.onLine, realtime: S.realtime, ua: navigator.userAgent, logs: recentLogs().slice(-80) };
+    try { await navigator.clipboard.writeText(JSON.stringify(info, null, 2)); toast(t('copied')); }
+    catch (e) { log.warn('diag.copy_failed', e); toast(t('copy_manual'), true); }
+  },
+  async 'server-logs'() {
+    try {
+      await flushLogs();
+      const rows = await run(sb.from('app_logs').select('*').order('at', { ascending: false }).limit(40), 'logs.load');
+      $('#server-logs').innerHTML = `<div class="sec-title">${t('server_logs')}</div><div class="log-list">${rows.map((r) =>
+        logRow({ ...r, event: `${r.event} · ${personName(r.user_id)} · ${r.app_version ?? ''}` })).join('') || '—'}</div>`;
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  async 'remind-open'(el) {
+    if (el.dataset.night !== S.night) { S.night = el.dataset.night; await loadNight(); render(); }
+    openShare(el.dataset.id, 'reminder');
+  },
+  async 'note-open'(el) { closeModal(); if (S.bookings.some((b) => b.id === el.dataset.id)) openBooking(el.dataset.id); },
   async 'go-night'(el) { await goNight(el.dataset.d); },
   'at-now'() { S.at = 'now'; render(); },
   unselect() { S.selTable = null; render(); },
@@ -1094,6 +1630,7 @@ document.addEventListener('click', (e) => {
   if (e.target === modal) return closeModal();
   const tbl = e.target.closest('svg.floor:not(.editor) [data-tid]');
   if (tbl) {
+    if (S.moving) return finishMove(tbl.dataset.tid);
     if (wide()) { S.selTable = tbl.dataset.tid; return render(); }
     return openTable(tbl.dataset.tid);
   }
@@ -1110,7 +1647,12 @@ const changes = {
     const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings).length > 0;
     sel.innerHTML = tableOptions(tablesOf(nightLayoutId()), sel.value, busy);
   },
-  slip(el) { const f = el.files?.[0]; if (f) uploadSlip(el.dataset.id, f); },
+  'slip-pick'(el) { const f = el.files?.[0]; const n = $('#slip-name'); if (n) n.textContent = f ? f.name.slice(0, 24) : t('attach_slip'); },
+  'product-pick'(el) {
+    const per = el.selectedOptions[0]?.dataset.pp === '1';
+    const b = S.bookings.find((x) => x.id === el.form.booking_id.value);
+    el.form.qty.value = per && b ? b.party_size : 1;
+  },
   'night-layout'(el) { changeNightLayout(el.value); },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
   'edit-layout'(el) { if (!confirmLeaveEdit()) { el.value = S.editLayoutId; return; } S.editLayoutId = el.value; S.selTable = null; render(); },
@@ -1123,8 +1665,27 @@ const changes = {
     catch (e) { toast(errMsg(e), true); await reload(); }
   },
 };
+// Recognise returning guests from their phone number while a booking is typed in.
+let phoneTimer = null;
+async function lookupGuest(input) {
+  const hint = $('#guest-hint');
+  const phone = input.value.replace(/[^0-9+]/g, '');
+  if (!hint) return;
+  if (phone.replace(/\D/g, '').length < 9) { hint.innerHTML = ''; return; }
+  try {
+    const g = await run(sb.from('guests').select('*').eq('phone', phone).maybeSingle(), 'guest.lookup');
+    if (!g) { hint.innerHTML = `<div class="guest-hint muted small-text">${t('new_guest')}</div>`; return; }
+    const st = await run(sb.from('guest_stats').select('*').eq('guest_id', g.id).maybeSingle(), 'guest.stats');
+    const nameInput = input.form?.guest_name;
+    if (nameInput && !nameInput.value.trim() && g.name) nameInput.value = g.name;
+    hint.innerHTML = `<div class="guest-hint ${st?.no_shows ? 'warn-soft' : ''}"><b>${t('returning_guest')}</b> ${esc(g.name)} ${tagPills(g.tags)}
+      <span class="muted small-text">${t('guest_stats').replace('{v}', st?.visits ?? 0).replace('{n}', st?.no_shows ?? 0)}</span></div>`;
+  } catch { hint.innerHTML = ''; }
+}
+
 document.addEventListener('input', (e) => {
   if (e.target.dataset.input === 'q') { S.q = e.target.value; $('#list-rows').innerHTML = listRows(); return; }
+  if (e.target.dataset.input === 'phone') { clearTimeout(phoneTimer); phoneTimer = setTimeout(() => lookupGuest(e.target), 350); return; }
   if (e.target.dataset.input !== 'at') return;
   S.at = timeSlots()[Number(e.target.value)];
   $('#at-label').textContent = S.at;
@@ -1140,9 +1701,25 @@ document.addEventListener('change', (e) => {
 });
 
 const forms = {
+  payment(f) { return savePayment(f); },
+  item(f) { return saveItem(f); },
+  async messages(f) {
+    const v = Object.fromEntries(new FormData(f));
+    try { await run(sb.from('settings').update({ shop_name: v.shop_name.trim(), confirm_template: v.confirm_template, reminder_template: v.reminder_template }).eq('id', 1), 'settings.messages'); toast(t('saved')); await reload(); }
+    catch (e) { toast(errMsg(e), true); }
+  },
+  async product(f) {
+    const v = Object.fromEntries(new FormData(f));
+    const row = { name: v.name.trim(), price: Number(v.price), per_person: !!v.per_person, active: !!v.active };
+    try {
+      if (v.id) await run(sb.from('products').update(row).eq('id', v.id), 'product.update');
+      else await run(sb.from('products').insert(row), 'product.insert');
+      toast(t('saved')); await reload();
+    } catch (e) { toast(errMsg(e), true); }
+  },
   async login(f) {
     const { error } = await sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.password.value });
-    if (error) toast(errMsg(error), true);
+    if (error) { log.warn('auth.login_failed', { code: error.code ?? error.status, message: error.message }); toast(errMsg(error), true); }
   },
   booking(f) { return saveBooking(f, false); },
   table(f) {

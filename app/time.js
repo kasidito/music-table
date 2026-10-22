@@ -42,16 +42,20 @@ export function slots(s, step = 15) {
 export const startMs = (b) => Date.parse(b.start_at);
 export const endMs = (b) => startMs(b) + b.duration_min * 60000;
 export const isActive = (b) => b.status === 'booked' || b.status === 'seated';
+// A booking can hold more than one table (combined tables).
+export const tablesOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])];
+const holds = (b, tableId) => b.table_id === tableId || (b.extra_table_ids ?? []).includes(tableId);
 
 export function conflictsFor(draft, bookings) {
+  const mine = tablesOf(draft);
   return bookings.filter((b) =>
-    b.id !== draft.id && b.table_id === draft.table_id && isActive(b) &&
+    b.id !== draft.id && isActive(b) && tablesOf(b).some((id) => mine.includes(id)) &&
     startMs(draft) < endMs(b) && startMs(b) < endMs(draft));
 }
 
 // What a table looks like at a moment: seated holds the table until marked done.
 export function tableStateAt(tableId, bookings, ms) {
-  const mine = bookings.filter((b) => b.table_id === tableId && isActive(b));
+  const mine = bookings.filter((b) => holds(b, tableId) && isActive(b));
   const seated = mine.find((b) => b.status === 'seated' && startMs(b) <= ms);
   if (seated) return { state: 'seated', booking: seated };
   const booked = mine.find((b) => b.status === 'booked' && startMs(b) <= ms && ms < endMs(b));
@@ -72,7 +76,7 @@ export function upcoming(bookings, ms) {
 
 // Tables with at least one booking that still counts tonight.
 export const tablesBooked = (bookings) =>
-  new Set(bookings.filter((b) => b.status !== 'cancelled' && b.status !== 'no_show').map((b) => b.table_id)).size;
+  new Set(bookings.filter((b) => b.status !== 'cancelled' && b.status !== 'no_show').flatMap(tablesOf)).size;
 
 export const NEXT_STATUS = { booked: ['seated', 'cancelled', 'no_show'], seated: ['done'], done: [], cancelled: [], no_show: [] };
 
