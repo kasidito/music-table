@@ -179,9 +179,31 @@ try {
   await shot('06-list');
   step('edit booking');
 
+  // List filters and search
+  await page.click('[data-action=filter][data-f=unpaid]');
+  assert.equal(await page.locator('#list-rows .brow').count(), 0, 'nothing unpaid after the slip');
+  await page.click('[data-action=filter][data-f=all]');
+  await page.fill('input.search', 'late');
+  assert.equal(await page.locator('#list-rows .brow').count(), 1, 'search by name');
+  await page.fill('input.search', '');
+  step('list filter chips and search');
+
+  // New booking form: defaults to now and a free table; taken tables are marked
+  await go('map');
+  await page.click('[data-action=new-booking].nb');
+  assert.equal(await page.inputValue('#modal [name=time]'), '21:00', 'time defaults to now');
+  const chosen = await page.inputValue('#modal [name=table_id]');
+  const optText = await page.locator(`#modal [name=table_id] option[value="${chosen}"]`).textContent();
+  assert.ok(!optText.includes('ไม่ว่าง'), `default table is free (${optText})`);
+  assert.ok(await page.locator('#modal [name=table_id] option', { hasText: 'ไม่ว่าง' }).count() > 0, 'busy tables marked');
+  await page.click('#modal [data-action=close-modal]');
+  assert.equal(await page.getAttribute('svg.floor [data-tid=T1] .tier-dot', 'style'), 'fill:#D7261E', 'tier dot uses tier color');
+  step('booking form defaults; tier dot colored');
+
   // Summary
   await go('summary');
-  const nums = await page.locator('.stat .num').allTextContents();
+  assert.deepEqual(await page.locator('.stats.money .stat .num').allTextContents(), ['3,300฿', '0฿'], 'paid / owed revenue');
+  const nums = await page.locator('.stats:not(.money) .stat .num').allTextContents();
   assert.deepEqual(nums, ['3', '6', '1', '0', '1'], 'bookings, guests (4 done + 2 walk-in), walk-ins, cancelled, no-show');
   await shot('07-summary');
   step('nightly summary numbers');

@@ -1,5 +1,7 @@
 const DICT = {
   th: {
+    taken: 'ไม่ว่าง', filter: 'กรอง', f_all: 'ทั้งหมด', f_coming: 'กำลังจะมา', f_seated: 'นั่งอยู่', f_unpaid: 'ค้างจ่าย', f_closed: 'จบแล้ว',
+    search_ph: 'ค้นหาชื่อ เบอร์ หรือโต๊ะ', sum_paid: 'ยอดที่จ่ายแล้ว', sum_owed: 'ยอดค้างจ่าย',
     edit_layout: 'แก้ไขผัง', undo: 'ย้อนกลับ', redo: 'ทำซ้ำ', editing: 'กำลังแก้ไข', unsaved: 'ยังไม่บันทึก', cancel: 'ยกเลิก',
     room_size: 'ขนาดห้อง', depth: 'ลึก', apply: 'ใช้', room_fit: 'พอดีกับของในห้อง', drag_hint_edit: 'ลากเพื่อย้าย ลากเข้าใกล้ผนังจะชิดพอดี ลากวงกลมมุมขวาล่างเพื่อขยายห้อง',
     tap_to_edit: 'แตะโต๊ะหรือองค์ประกอบเพื่อแก้รายละเอียด', confirm_discard: 'ทิ้งการแก้ไขที่ยังไม่บันทึก?', save_partial: 'บันทึกได้บางส่วน:',
@@ -49,6 +51,8 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    taken: 'taken', filter: 'Filter', f_all: 'All', f_coming: 'Coming', f_seated: 'Seated', f_unpaid: 'Unpaid', f_closed: 'Finished',
+    search_ph: 'Search name, phone or table', sum_paid: 'Paid', sum_owed: 'Still owed',
     edit_layout: 'Edit layout', undo: 'Undo', redo: 'Redo', editing: 'Editing', unsaved: 'unsaved', cancel: 'Cancel',
     room_size: 'Room size', depth: 'Depth', apply: 'Apply', room_fit: 'Fit to contents', drag_hint_edit: 'Drag to move; near a wall it snaps flush. Drag the bottom-right circle to resize the room.',
     tap_to_edit: 'Tap a table or element to edit its details', confirm_discard: 'Discard unsaved changes?', save_partial: 'Saved with problems:',

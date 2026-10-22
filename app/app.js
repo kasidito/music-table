@@ -54,6 +54,7 @@ const tablesOf = (layoutId, floor) =>
 const personName = (id) => S.profiles.find((p) => p.id === id)?.display_name ?? '—';
 const isTonight = () => S.night === T.nightOf(Date.now(), S.settings);
 const hhmm = (iso) => T.bkkParts(Date.parse(iso)).hhmm;
+const fmtNight = (d) => { const p = dayParts(d); return `${p.wd} ${p.day} ${p.mon}`; };
 const baht = (n) => `${Number(n).toLocaleString('en-US')}฿`;
 const priceOf = (b) => tableById(b.table_id)?.price ?? null;
 const needsPayment = (b) => priceOf(b) != null && b.status !== 'cancelled' && b.status !== 'no_show';
@@ -303,8 +304,10 @@ function tableSvg(tb, cls, lines) {
     : `<rect x="${tb.x - w / 2 + 1}" y="${tb.y - h / 2 + 1}" width="${w - 2}" height="${h - 2}" rx="${isTable(tb) ? 6 : ['door', 'wall'].includes(tb.kind) ? 3 : 20}"/>`;
   const fs = Math.max(12, Math.min(18, Math.min(w, h) * 0.3));
   const shown = isTable(tb) ? lines : (['door', 'wall', 'speaker'].includes(tb.kind) ? [] : [tb.label]);
-  const text = shown.filter(Boolean).map((l, i, a) =>
-    `<text x="${tb.x}" y="${tb.y + (i - (a.length - 1) / 2) * fs * 1.15}" class="${i === 0 ? 'tl' : 'ts'}" font-size="${i === 0 ? fs : fs * 0.72}">${esc(l)}</text>`).join('');
+  const text = shown.filter(Boolean).map((l, i, a) => {
+    const size = Math.min(i === 0 ? fs : fs * 0.72, ((w - 8) / Math.max(1, String(l).length)) * 1.6);
+    return `<text x="${tb.x}" y="${tb.y + (i - (a.length - 1) / 2) * fs * 1.15}" class="${i === 0 ? 'tl' : 'ts'}" font-size="${Math.max(8, size).toFixed(1)}">${esc(l)}</text>`;
+  }).join('');
   const kind = isTable(tb) ? 'tbl' : `tbl fx fx-${tb.kind}`;
   let extra = tb.kind === 'speaker' ? `<circle cx="${tb.x}" cy="${tb.y}" r="${Math.min(w, h) / 5}" class="cone"/>` : '';
   const tier = isTable(tb) && tb.color;
@@ -312,7 +315,7 @@ function tableSvg(tb, cls, lines) {
     const r = Math.max(6, Math.min(w, h) * 0.13);
     const cx = tb.shape === 'round' ? tb.x + w * 0.33 : tb.x + w / 2 - r - 3;
     const cy = tb.shape === 'round' ? tb.y - h * 0.33 : tb.y - h / 2 + r + 3;
-    extra += `<circle class="tier-dot" cx="${cx}" cy="${cy}" r="${r}" fill="${tb.color}"/>`;
+    extra += `<circle class="tier-dot" cx="${cx}" cy="${cy}" r="${r}" style="fill:${tb.color}"/>`;
   }
   const style = tier && cls.includes('st-free') ? ` style="--tier:${tb.color}"` : '';
   return `<g class="${kind} ${cls}${tier ? ' tiered' : ''}"${style} ${isTable(tb) || cls.includes('edit') ? `data-tid="${tb.id}"` : ''}>${shape}${extra}${text}</g>`;
@@ -552,21 +555,49 @@ function bookingRow(b) {
   </button>`;
 }
 
+const LIST_FILTERS = {
+  all: () => true,
+  coming: (b) => b.status === 'booked',
+  seated: (b) => b.status === 'seated',
+  unpaid: (b) => needsPayment(b) && !b.paid,
+  closed: (b) => ['done', 'cancelled', 'no_show'].includes(b.status),
+};
+function filteredBookings() {
+  const q = (S.q ?? '').trim().toLowerCase();
+  return S.bookings.filter(LIST_FILTERS[S.filter ?? 'all']).filter((b) => !q ||
+    [b.guest_name, b.phone, tableById(b.table_id)?.label, b.note].some((v) => String(v ?? '').toLowerCase().includes(q)));
+}
+function listRows() {
+  const rows = filteredBookings();
+  return rows.length ? rows.map(bookingRow).join('') : `<p class="empty">${t('no_bookings')}</p>`;
+}
 function viewList() {
+  const f = S.filter ?? 'all';
+  const count = (k) => S.bookings.filter(LIST_FILTERS[k]).length;
   return `<section>
     <div class="row between toolbar">
       <h2>${S.bookings.length} ${t('bookings_word')}</h2>
       <button class="primary" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
-    ${S.bookings.length ? `<div class="list">${S.bookings.map(bookingRow).join('')}</div>` : `<p class="empty">${t('no_bookings')}</p>`}
+    <div class="filters" role="group" aria-label="${t('filter')}">
+      ${Object.keys(LIST_FILTERS).map((k) => `<button class="fchip ${f === k ? 'on' : ''}" data-action="filter" data-f="${k}" aria-pressed="${f === k}">${t('f_' + k)} <b>${count(k)}</b></button>`).join('')}
+    </div>
+    <input class="search" type="search" placeholder="${t('search_ph')}" value="${esc(S.q ?? '')}" data-input="q" aria-label="${t('search_ph')}">
+    <div class="list" id="list-rows">${listRows()}</div>
   </section>`;
 }
 
 function viewSummary() {
   const s = T.summary(S.bookings);
   const card = (n, label) => `<div class="stat"><div class="num">${n}</div><div class="muted">${label}</div></div>`;
+  const priced = S.bookings.filter(needsPayment);
+  const got = priced.filter((b) => b.paid).reduce((n, b) => n + priceOf(b), 0);
+  const owed = priced.filter((b) => !b.paid).reduce((n, b) => n + priceOf(b), 0);
   return `<section>
-    <h2>${t('summary_for')} ${S.night}</h2>
+    ${priced.length ? `<div class="stats money">
+      ${card(baht(got), t('sum_paid'))}
+      ${card(baht(owed), t('sum_owed'))}
+    </div>` : ''}
     <div class="stats">
       ${card(s.bookings, t('sum_bookings'))}
       ${card(s.guests, t('sum_guests'))}
@@ -726,7 +757,9 @@ function openTable(id) {
   const list = S.bookings.filter((b) => b.table_id === id);
   const free = isTonight() && T.tableStateAt(id, S.bookings, Date.now()).state === 'free';
   openModal(`<h2>${esc(tb.label)} <span class="muted small-text">${t('floor')} ${tb.floor} · ${tb.seats} ${t('seats_short')}${tb.price != null ? ' · ' + baht(tb.price) : ''}</span></h2>
-    <div class="list">${list.length ? list.map(bookingRow).join('') : `<p class="empty">${t('no_bookings')}</p>`}</div>
+    <div class="list">${list.length ? list.map((b) => b.status === 'booked' && isTonight()
+      ? `<div class="row">${bookingRow(b)}<button class="primary small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button></div>`
+      : bookingRow(b)).join('') : `<p class="empty">${t('no_bookings')}</p>`}</div>
     <div class="row wrap">
       <button class="primary" data-action="new-booking" data-table="${id}">${ICON.plus} ${t('new_booking')}</button>
       ${free ? `<button data-action="walk-in" data-table="${id}">${ICON.walk} ${t('walk_in')}</button>` : ''}
@@ -734,14 +767,25 @@ function openTable(id) {
   void ms;
 }
 
+function defaultTime(times) {
+  if (!isTonight()) return times[0];
+  const now = Date.now();
+  return times.find((x) => T.nightTimeToMs(S.night, x, S.settings) >= now - 5 * 60000) ?? times[times.length - 1];
+}
+const tableOptions = (tables, selected, busy) => tables.map((x) =>
+  `<option value="${x.id}" ${x.id === selected ? 'selected' : ''}>${busy(x) ? '● ' : ''}${esc(x.label)} · ${t('floor')} ${x.floor} · ${x.seats} ${t('seats_short')}${x.price != null ? ' · ' + baht(x.price) : ''}${busy(x) ? ' · ' + t('taken') : ''}</option>`).join('');
+
 function bookingForm(b, opts = {}) {
   const lid = nightLayoutId();
   const walk = opts.walkIn || b?.is_walk_in;
   const tables = tablesOf(lid);
-  const time = b ? hhmm(b.start_at) : (S.at !== 'now' ? S.at : null);
   const times = T.slots(S.settings, 15);
+  const time = b ? hhmm(b.start_at) : S.at !== 'now' ? S.at : defaultTime(times);
   if (time && !times.includes(time)) times.unshift(time);
-  const tableId = b?.table_id ?? opts.tableId ?? tables[0]?.id;
+  const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, time, S.settings)).toISOString(), duration_min: S.settings.default_duration_min, id: b?.id };
+  const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings).length > 0;
+  const tableId = b?.table_id ?? opts.tableId ?? (wide() && tableById(S.selTable)?.layout_id === lid ? S.selTable : null)
+    ?? (tables.find((x) => x.floor === S.floor && !busy(x)) ?? tables.find((x) => !busy(x)) ?? tables[0])?.id;
   if (!tables.length) return `<p class="empty">${t('no_tables')}</p>`;
   return `<h2>${b ? t('edit_booking') : walk ? t('walk_in') : t('new_booking')}</h2>
     <form data-form="booking" class="stack">
@@ -751,11 +795,10 @@ function bookingForm(b, opts = {}) {
         <label>${t('name')}<input name="guest_name" value="${esc(b?.guest_name)}" ${walk ? '' : 'required'} maxlength="80"></label>
         ${walk ? '' : `<label>${t('phone')}<input name="phone" type="tel" value="${esc(b?.phone)}" required maxlength="30"></label>`}
         <label>${t('guests')}<input name="party_size" type="number" min="1" max="200" value="${b?.party_size ?? 2}" required></label>
-        ${opts.walkIn ? '' : `<label>${t('time')}<select name="time">${times.map((x) =>
+        ${opts.walkIn ? '' : `<label>${t('time')}<select name="time" data-change="bk-time">${times.map((x) =>
           `<option ${x === time ? 'selected' : ''}>${x}</option>`).join('')}</select></label>`}
         <label>${t('duration_min')}<input name="duration_min" type="number" min="15" max="720" step="15" value="${b?.duration_min ?? S.settings.default_duration_min}" required></label>
-        <label>${t('table')}<select name="table_id">${tables.map((x) =>
-          `<option value="${x.id}" ${x.id === tableId ? 'selected' : ''}>${esc(x.label)} · ${t('floor')} ${x.floor} · ${x.seats} ${t('seats_short')}${x.price != null ? ' · ' + baht(x.price) : ''}</option>`).join('')}</select></label>
+        <label>${t('table')}<select name="table_id">${tableOptions(tables, tableId, busy)}</select></label>
       </div>
       <label>${t('note')}<textarea name="note" rows="2" maxlength="500">${esc(b?.note)}</textarea></label>
       <div id="warnings"></div>
@@ -811,9 +854,10 @@ async function openBooking(id) {
   if (!b) return;
   const next = T.NEXT_STATUS[b.status];
   const label = { seated: t('act_seat'), cancelled: t('act_cancel'), no_show: t('act_noshow'), done: t('act_done') };
-  openModal(`<h2>${esc(b.guest_name || t('walk_in'))} <span class="pill st-${b.status}">${t('st_' + b.status)}</span></h2>
+  const late = isTonight() && T.isLate(b, Date.now());
+  openModal(`<h2>${esc(b.guest_name || t('walk_in'))} <span class="pill st-${late ? 'late' : b.status}">${late ? t('late') : t('st_' + b.status)}</span></h2>
     <dl class="facts">
-      <dt>${t('time')}</dt><dd>${S.night} ${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}</dd>
+      <dt>${t('time')}</dt><dd>${fmtNight(S.night)} · ${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}</dd>
       <dt>${t('table')}</dt><dd>${esc(tableLabel(b.table_id))}</dd>
       <dt>${t('guests')}</dt><dd>${b.party_size}</dd>
       ${b.phone ? `<dt>${t('phone')}</dt><dd><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a></dd>` : ''}
@@ -977,6 +1021,7 @@ const actions = {
   async 'night-today'() { await goNight(T.nightOf(Date.now(), S.settings)); },
   'close-modal'() { closeModal(); },
   more() { moreSheet(); },
+  filter(el) { S.filter = el.dataset.f; render(); },
   'mark-paid'(el) { return setPaid(el.dataset.id, true); },
   'mark-unpaid'(el) { if (confirm(t('confirm_unpaid'))) return setPaid(el.dataset.id, false); },
   async 'go-night'(el) { await goNight(el.dataset.d); },
@@ -1059,6 +1104,12 @@ document.addEventListener('click', (e) => {
 const changes = {
   async night(el) { if (el.value) await goNight(el.value); },
   at(el) { S.at = el.value; render(); },
+  'bk-time'(el) {
+    const form = el.form, sel = form.table_id, id = form.id.value || undefined;
+    const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, el.value, S.settings)).toISOString(), duration_min: Number(form.duration_min.value) || 120, id };
+    const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings).length > 0;
+    sel.innerHTML = tableOptions(tablesOf(nightLayoutId()), sel.value, busy);
+  },
   slip(el) { const f = el.files?.[0]; if (f) uploadSlip(el.dataset.id, f); },
   'night-layout'(el) { changeNightLayout(el.value); },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
@@ -1073,6 +1124,7 @@ const changes = {
   },
 };
 document.addEventListener('input', (e) => {
+  if (e.target.dataset.input === 'q') { S.q = e.target.value; $('#list-rows').innerHTML = listRows(); return; }
   if (e.target.dataset.input !== 'at') return;
   S.at = timeSlots()[Number(e.target.value)];
   $('#at-label').textContent = S.at;
