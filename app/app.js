@@ -151,7 +151,21 @@ function render() {
     layouts: viewLayouts, staff: viewStaff, settings: viewSettings,
   }[S.view]();
   app.innerHTML = viewHeader() + `<main>${body}</main>`;
+  fitFloors();
 }
+
+// Make each floor drawing fill the space left on screen, so the whole floor shows without scrolling.
+function fitFloors() {
+  for (const svg of document.querySelectorAll('#app svg.floor')) {
+    const below = svg.id === 'editor-svg' ? 16 : 52;
+    const room = Math.max(240, window.innerHeight - svg.getBoundingClientRect().top - window.scrollY - below);
+    const vb = svg.viewBox.baseVal, maxW = svg.parentElement.clientWidth;
+    const h = Math.min(room, (maxW * vb.height) / vb.width);
+    svg.style.height = h + 'px';
+    svg.style.width = Math.min(maxW, (h * vb.width) / vb.height) + 'px';
+  }
+}
+window.addEventListener('resize', () => fitFloors());
 
 const langBtn = () => `<button class="ghost small" data-action="lang">${getLang() === 'th' ? 'EN' : 'ไทย'}</button>`;
 
@@ -214,7 +228,7 @@ function tableSvg(tb, cls, lines) {
   const { w, h } = sizeOf(tb);
   const shape = tb.shape === 'round'
     ? `<ellipse cx="${tb.x}" cy="${tb.y}" rx="${w / 2 - 1}" ry="${h / 2 - 1}"/>`
-    : `<rect x="${tb.x - w / 2 + 1}" y="${tb.y - h / 2 + 1}" width="${w - 2}" height="${h - 2}" rx="${isTable(tb) ? 6 : 24}"/>`;
+    : `<rect x="${tb.x - w / 2 + 1}" y="${tb.y - h / 2 + 1}" width="${w - 2}" height="${h - 2}" rx="${isTable(tb) ? 6 : ['door', 'wall'].includes(tb.kind) ? 3 : 20}"/>`;
   const fs = Math.max(12, Math.min(18, Math.min(w, h) * 0.3));
   const shown = isTable(tb) ? lines : (['door', 'wall', 'speaker'].includes(tb.kind) ? [] : [tb.label]);
   const text = shown.filter(Boolean).map((l, i, a) =>
@@ -268,7 +282,7 @@ function viewMap() {
     const st = T.tableStateAt(tb.id, S.bookings, ms);
     let info = '';
     if (st.booking) info = hhmm(st.booking.start_at);
-    else if (st.next) info = `${t('next')} ${hhmm(st.next.start_at)}`;
+    else if (st.next) info = hhmm(st.next.start_at);
     return tableSvg(tb, 'st-' + st.state, [tb.label, info]);
   }).join('');
   return `<section>

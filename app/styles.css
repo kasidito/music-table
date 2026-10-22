@@ -53,6 +53,9 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
 .grow { flex: 1; min-width: 0; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.grid2 > * { min-width: 0; }
+.grid2 input, .grid2 select { min-width: 0; max-width: 100%; }
+input[type=time], input[type=date] { -webkit-appearance: none; appearance: none; text-align: left; }
 .muted { color: var(--muted); }
 .small-text { font-size: .85rem; }
 .center { display: grid; place-items: center; min-height: 60vh; }
@@ -81,7 +84,7 @@ main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 .seg button.on { background: var(--surface2); color: var(--accent); font-weight: 600; }
 
 svg.floor {
-  width: 100%; height: auto; display: block; max-height: 75vh;
+  width: 100%; height: 60vh; display: block; margin: 0 auto;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 40px 40px;
 }
