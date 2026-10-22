@@ -89,7 +89,7 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
 }
 .bn-item.on { color: var(--accent); font-weight: 600; }
 
-@media (min-width: 900px) {
+@media (min-width: 768px) {
   .rail {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
     position: sticky; top: 0; height: 100vh; width: var(--rail); flex: none;
@@ -104,12 +104,15 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
     background: transparent; color: var(--muted); font-size: 12px;
   }
   .rail-item.on { background: var(--surface2); color: var(--accent); font-weight: 600; }
-  .bottomnav, .phone-only { display: none !important; }
+  .bottomnav { display: none !important; }
+  main { padding: 12px 24px 24px; }
+}
+@media (min-width: 1024px) {
+  .phone-only { display: none !important; }
   .side {
     display: block; width: var(--side); flex: none; position: sticky; top: 0; height: 100vh; overflow-y: auto;
     background: var(--raised); border-left: 1px solid var(--line); padding: 16px;
   }
-  main { padding: 12px 24px 24px; }
 }
 .lang-mark { font-weight: 700; font-size: 15px; border: 1.5px solid currentColor; border-radius: 6px; padding: 0 4px; }
 
@@ -120,8 +123,8 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
   background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
-@media (min-width: 900px) { .topbar { padding: 14px 24px 10px; } }
-@media (max-width: 899px) { .topbar { position: static; } }
+@media (min-width: 768px) { .topbar { padding: 14px 24px 10px; } }
+@media (max-width: 767px) { .topbar { position: static; } }
 .top-row { margin-bottom: 8px; }
 .eyebrow { font-size: 12px; color: var(--muted); letter-spacing: .06em; }
 .night-title { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
@@ -130,7 +133,7 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
 .layout-pick { width: auto; min-height: 40px; font-size: 14px; background: var(--surface); }
 
 .datestrip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 52px; gap: 6px; margin-bottom: 8px; }
-@media (min-width: 900px) { .datestrip { grid-template-columns: repeat(4, 96px) 52px; } }
+@media (min-width: 768px) { .datestrip { grid-template-columns: repeat(4, 96px) 52px; } }
 .day {
   flex-direction: column; gap: 0; min-height: 56px; padding: 4px 0; border-radius: 12px;
   background: var(--surface); border: 1px solid var(--line); line-height: 1.15; position: relative;
@@ -161,7 +164,7 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
   flex: 1; min-height: 32px; padding: 0; border: 0; background: transparent; accent-color: var(--accent);
 }
 .nb { white-space: nowrap; }
-@media (max-width: 899px) {
+@media (max-width: 767px) {
   .timebar { order: 3; flex-basis: 100%; }
 }
 

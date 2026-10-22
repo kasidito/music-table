@@ -168,7 +168,7 @@ function render() {
 // Make each floor drawing fill the space left on screen, so the whole floor shows without scrolling.
 function fitFloors() {
   for (const svg of document.querySelectorAll('#app svg.floor')) {
-    const below = (svg.id === 'editor-svg' ? 16 : 52) + (wide() ? 0 : 96);
+    const below = (svg.id === 'editor-svg' ? 16 : 52) + (hasBottomNav() ? 96 : 0);
     const room = Math.max(240, window.innerHeight - svg.getBoundingClientRect().top - window.scrollY - below);
     const vb = svg.viewBox.baseVal, maxW = svg.parentElement.clientWidth;
     const h = Math.min(room, (maxW * vb.height) / vb.width);
@@ -201,7 +201,8 @@ function viewInactive() {
   </div>`;
 }
 
-const wide = () => window.matchMedia('(min-width: 900px)').matches;
+const wide = () => window.matchMedia('(min-width: 1024px)').matches;
+const hasBottomNav = () => !window.matchMedia('(min-width: 768px)').matches;
 const NIGHT_VIEWS = ['map', 'list', 'summary'];
 function navItems() {
   const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart]];
