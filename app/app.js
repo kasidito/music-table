@@ -25,6 +25,8 @@ const ICON = {
   cal: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   clock: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>',
+  redo: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>',
   camera: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
   warn: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
 };
@@ -293,7 +295,6 @@ function moreSheet() {
 }
 
 // Shared table drawing for the floor map and the layout editor.
-const CANVAS = { w: 1200, h: 900 };
 const sizeOf = (tb) => ({ w: Number(tb.w) || 64, h: Number(tb.h) || 64 });
 function tableSvg(tb, cls, lines) {
   const { w, h } = sizeOf(tb);
@@ -322,34 +323,117 @@ const FIXTURES = {
   stairs: [80, 100, 'square'], restroom: [100, 80, 'square'], dj: [100, 60, 'square'], wall: [200, 12, 'square'],
   sofa: [60, 180, 'square'], zone: [120, 90, 'square'],
 };
-async function addItem(kind) {
-  const existing = tablesOf(S.editLayoutId);
-  let row;
-  if (kind === 'table') {
-    let n = existing.length + 1;
-    while (existing.some((x) => x.label === `T${n}`)) n++;
-    row = { kind, label: `T${n}`, seats: 4, shape: 'square', w: 64, h: 64 };
-  } else {
-    const [w, h, shape] = FIXTURES[kind];
-    row = { kind, label: t('fx_' + kind), seats: 0, shape, w, h };
-  }
-  const box = $('#editor-svg')?.viewBox.baseVal;
-  const x = box ? Math.round(box.x + box.width / 2) : 400, y = box ? Math.round(box.y + box.height / 2) : 300;
-  try {
-    const saved = await run(sb.from('tables').insert({ ...row, layout_id: S.editLayoutId, floor: S.editFloor, x, y }).select().single());
-    S.selTable = saved.id; await reload();
-  } catch (e) { toast(errMsg(e), true); }
+// ───────── Rooms (walls) ─────────
+function boundsOf(items) {
+  let x1 = 0, y1 = 0;
+  for (const it of items) { const { w, h } = sizeOf(it); x1 = Math.max(x1, it.x + w / 2); y1 = Math.max(y1, it.y + h / 2); }
+  return { w: Math.ceil(x1 + 24), h: Math.ceil(y1 + 24) };
 }
-// Fit the drawing to what is on this floor.
-function viewBoxFor(items, pad = 24) {
-  if (!items.length) return `0 0 800 600`;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+function roomOf(layoutId, floor, items) {
+  const rooms = S.edit?.layoutId === layoutId ? S.edit.rooms : S.layouts.find((l) => l.id === layoutId)?.rooms;
+  const r = rooms?.[floor];
+  return r?.w && r?.h ? { w: Number(r.w), h: Number(r.h) } : boundsOf(items);
+}
+// The drawing shows the whole room plus anything placed outside it.
+function viewBoxFor(items, room, pad = 12) {
+  let x0 = 0, y0 = 0, x1 = room.w, y1 = room.h;
   for (const it of items) {
     const { w, h } = sizeOf(it);
     x0 = Math.min(x0, it.x - w / 2); y0 = Math.min(y0, it.y - h / 2);
     x1 = Math.max(x1, it.x + w / 2); y1 = Math.max(y1, it.y + h / 2);
   }
   return `${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}`;
+}
+const wallsSvg = (room) => `<rect class="room" x="0" y="0" width="${room.w}" height="${room.h}" rx="4"/>`;
+
+// ───────── Layout edit mode: a local draft with undo/redo, saved only on Save ─────────
+const EDIT_FIELDS = ['label', 'seats', 'shape', 'floor', 'x', 'y', 'w', 'h', 'color', 'price', 'kind'];
+let newSeq = 0;
+function startEdit() {
+  const lay = S.layouts.find((l) => l.id === S.editLayoutId);
+  S.edit = {
+    layoutId: lay.id,
+    items: S.tables.filter((x) => x.layout_id === lay.id && !x.archived).map((x) => ({ ...x, ...sizeOf(x) })),
+    removed: [],
+    rooms: JSON.parse(JSON.stringify(lay.rooms ?? {})),
+    undo: [], redo: [],
+  };
+  for (const f of [1, 2]) {
+    if (!S.edit.rooms[f]) {
+      const items = S.edit.items.filter((x) => x.floor === f);
+      if (items.length) S.edit.rooms[f] = boundsOf(items);
+    }
+  }
+  S.edit.start = snapshot();
+  render();
+}
+const snapshot = () => JSON.stringify({ items: S.edit.items, removed: S.edit.removed, rooms: S.edit.rooms });
+function restore(snap) { Object.assign(S.edit, JSON.parse(snap)); }
+const isDirty = () => !!S.edit && snapshot() !== S.edit.start;
+function change(fn) {
+  S.edit.undo.push(snapshot());
+  if (S.edit.undo.length > 100) S.edit.undo.shift();
+  S.edit.redo = [];
+  fn();
+  render();
+}
+const draftItem = (id) => S.edit?.items.find((x) => x.id === id);
+function confirmLeaveEdit() {
+  if (!isDirty()) { S.edit = null; return true; }
+  if (!confirm(t('confirm_discard'))) return false;
+  S.edit = null;
+  return true;
+}
+
+function addItem(kind) {
+  const floor = S.editFloor;
+  const room = S.edit.rooms[floor] ?? { w: 800, h: 600 };
+  let row;
+  if (kind === 'table') {
+    const labels = S.edit.items.map((x) => x.label);
+    let n = S.edit.items.filter(isTable).length + 1;
+    while (labels.includes(`T${n}`)) n++;
+    row = { kind, label: `T${n}`, seats: 4, shape: 'square', w: 64, h: 64, color: null, price: null };
+  } else {
+    const [w, h, shape] = FIXTURES[kind];
+    row = { kind, label: t('fx_' + kind), seats: 0, shape, w, h, color: null, price: null };
+  }
+  const id = `new-${++newSeq}`;
+  change(() => {
+    if (!S.edit.rooms[floor]) S.edit.rooms[floor] = room;
+    S.edit.items.push({ ...row, id, layout_id: S.edit.layoutId, floor, x: Math.round(room.w / 2), y: Math.round(room.h / 2), archived: false });
+    S.selTable = id;
+  });
+}
+
+async function saveEdit() {
+  const e = S.edit, errors = [];
+  const orig = new Map(S.tables.map((x) => [x.id, x]));
+  const clean = (it) => Object.fromEntries(EDIT_FIELDS.map((k) => [k, it[k] ?? null]));
+  for (const it of e.items) {
+    try {
+      if (it.id.startsWith('new-')) {
+        await run(sb.from('tables').insert({ ...clean(it), layout_id: e.layoutId }));
+      } else {
+        const o = orig.get(it.id);
+        const diff = Object.fromEntries(EDIT_FIELDS.filter((k) => String(o?.[k] ?? '') !== String(it[k] ?? '')).map((k) => [k, it[k] ?? null]));
+        if (Object.keys(diff).length) await run(sb.from('tables').update(diff).eq('id', it.id));
+      }
+    } catch (err) { errors.push(`${it.label}: ${errMsg(err)}`); }
+  }
+  for (const id of e.removed) {
+    try { await run(sb.from('tables').update({ archived: true }).eq('id', id)); }
+    catch (err) { errors.push(`${orig.get(id)?.label ?? ''}: ${errMsg(err)}`); }
+  }
+  const lay = S.layouts.find((l) => l.id === e.layoutId);
+  if (JSON.stringify(lay.rooms ?? {}) !== JSON.stringify(e.rooms)) {
+    try { await run(sb.from('layouts').update({ rooms: e.rooms }).eq('id', e.layoutId)); }
+    catch (err) { errors.push(errMsg(err)); }
+  }
+  S.edit = null;
+  await reload();
+  if (errors.length) { toast(t('save_partial') + ' ' + errors.join(' · '), true); }
+  else toast(t('saved'));
 }
 
 function mapSvg() {
@@ -362,7 +446,8 @@ function mapSvg() {
     const info = st.booking ? hhmm(st.booking.start_at) : st.next ? hhmm(st.next.start_at) : '';
     return tableSvg(tb, 'st-' + st.state + (tb.id === S.selTable && wide() ? ' sel' : ''), [tb.label, info]);
   }).join('');
-  return `<svg class="floor" viewBox="${viewBoxFor(items)}" role="img" aria-label="${t('floor')} ${S.floor}">${body}</svg>`;
+  const room = roomOf(lid, S.floor, items);
+  return `<svg class="floor" viewBox="${viewBoxFor(items, room)}" role="img" aria-label="${t('floor')} ${S.floor}">${wallsSvg(room)}${body}</svg>`;
 }
 
 function timeSlots() { return T.slots(S.settings, 15); }
@@ -493,38 +578,77 @@ function viewSummary() {
 }
 
 function viewLayouts() {
+  if (S.edit && !S.layouts.some((l) => l.id === S.edit.layoutId)) S.edit = null;
   if (!S.editLayoutId) S.editLayoutId = nightLayoutId() ?? S.layouts[0]?.id;
   const lay = S.layouts.find((l) => l.id === S.editLayoutId);
   if (!lay) return `<section><button class="primary" data-action="layout-new">${ICON.plus} ${t('layout_new')}</button></section>`;
-  const items = itemsOf(lay.id, S.editFloor);
-  const sel = tableById(S.selTable);
-  const selOk = sel && sel.layout_id === lay.id && !sel.archived;
+  const editing = S.edit?.layoutId === lay.id;
+  const all = editing ? S.edit.items : itemsOf(lay.id);
+  const items = all.filter((x) => x.floor === S.editFloor);
+  const room = roomOf(lay.id, S.editFloor, items);
+  const sel = editing ? draftItem(S.selTable) : null;
+  const floorSeg = `<div class="seg">${[1, 2].map((f) =>
+    `<button class="${S.editFloor === f ? 'on' : ''}" data-action="edit-floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>`;
+  const handle = editing ? `<g class="room-handle" data-handle="room"><circle cx="${room.w}" cy="${room.h}" r="16"/><path d="M${room.w - 6} ${room.h + 2}l8-8M${room.w - 1} ${room.h + 6}l6-6"/></g>` : '';
+  const svg = `<svg id="editor-svg" class="floor editor ${editing ? 'editing' : ''}" viewBox="${viewBoxFor(items, room, editing ? 60 : 12)}">
+    ${wallsSvg(room)}
+    ${items.map((tb) => tableSvg(tb, 'edit' + (editing && tb.id === S.selTable ? ' sel' : ''), [tb.label, isTable(tb) ? `${tb.seats} ${t('seats_short')}` : ''])).join('')}
+    ${handle}
+  </svg>`;
+
+  if (!editing) {
+    return `<section>
+      <div class="row wrap toolbar">
+        <select data-change="edit-layout" class="grow">${S.layouts.map((l) =>
+          `<option value="${l.id}" ${l.id === lay.id ? 'selected' : ''}>${esc(l.name)}${l.is_default ? ' (' + t('default') + ')' : ''}</option>`).join('')}</select>
+        <button class="primary" data-action="edit-start">${ICON.edit} ${t('edit_layout')}</button>
+      </div>
+      <div class="row wrap toolbar">
+        ${floorSeg}
+        <div class="row wrap">
+          <button class="ghost small" data-action="layout-new">${t('layout_new')}</button>
+          <button class="ghost small" data-action="layout-dup">${t('layout_dup')}</button>
+          <button class="ghost small" data-action="layout-rename">${t('rename')}</button>
+          ${lay.is_default ? '' : `<button class="ghost small" data-action="layout-default">${t('make_default')}</button>
+            <button class="ghost small danger" data-action="layout-delete">${t('delete')}</button>`}
+        </div>
+      </div>
+      <div class="floor-wrap">${svg}</div>
+    </section>`;
+  }
+
   return `<section>
-    <div class="row wrap toolbar">
-      <select data-change="edit-layout">${S.layouts.map((l) =>
-        `<option value="${l.id}" ${l.id === lay.id ? 'selected' : ''}>${esc(l.name)}${l.is_default ? ' (' + t('default') + ')' : ''}</option>`).join('')}</select>
-      <button class="ghost small" data-action="layout-new">${t('layout_new')}</button>
-      <button class="ghost small" data-action="layout-dup">${t('layout_dup')}</button>
-      <button class="ghost small" data-action="layout-rename">${t('rename')}</button>
-      ${lay.is_default ? '' : `<button class="ghost small" data-action="layout-default">${t('make_default')}</button>
-        <button class="ghost small danger" data-action="layout-delete">${t('delete')}</button>`}
+    <div class="editbar">
+      <div class="row">
+        <button class="icon-btn" data-action="undo" ${S.edit.undo.length ? '' : 'disabled'} aria-label="${t('undo')}">${ICON.undo}<span>${t('undo')}</span></button>
+        <button class="icon-btn" data-action="redo" ${S.edit.redo.length ? '' : 'disabled'} aria-label="${t('redo')}">${ICON.redo}<span>${t('redo')}</span></button>
+      </div>
+      <span class="edit-title">${t('editing')}: ${esc(lay.name)}${isDirty() ? ` <i class="dirty">${t('unsaved')}</i>` : ''}</span>
+      <div class="row">
+        <button class="ghost" data-action="edit-cancel">${t('cancel')}</button>
+        <button class="primary" data-action="edit-save" ${isDirty() ? '' : 'disabled'}>${t('save')}</button>
+      </div>
     </div>
     <div class="row wrap between toolbar">
-      <div class="seg">${[1, 2].map((f) =>
-        `<button class="${S.editFloor === f ? 'on' : ''}" data-action="edit-floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
-      <div class="row">
-        <button class="primary" data-action="table-add">${ICON.plus} ${t('table_add')}</button>
+      ${floorSeg}
+      <div class="row wrap">
+        <button class="primary small" data-action="table-add">${ICON.plus} ${t('table_add')}</button>
         <select data-change="add-element" aria-label="${t('add_element')}">
           <option value="">+ ${t('add_element')}</option>
           ${Object.keys(FIXTURES).map((k) => `<option value="${k}">${t('fx_' + k)}</option>`).join('')}
         </select>
       </div>
     </div>
-    <p class="muted small-text">${t('drag_hint')}</p>
-    <div class="floor-wrap"><svg id="editor-svg" class="floor editor" viewBox="${viewBoxFor(items, 80)}">
-      ${items.map((tb) => tableSvg(tb, 'edit' + (tb.id === S.selTable ? ' sel' : ''), [tb.label, `${tb.seats} ${t('seats_short')}`])).join('')}
-    </svg></div>
-    ${selOk ? `<form data-form="table" class="panel stack">
+    <form data-form="room" class="room-bar">
+      <span class="muted small-text">${t('room_size')}</span>
+      <label class="inline-label">${t('width')}<input name="w" type="number" min="100" max="3000" value="${Math.round(room.w)}"></label>
+      <label class="inline-label">${t('depth')}<input name="h" type="number" min="100" max="3000" value="${Math.round(room.h)}"></label>
+      <button class="ghost small" type="submit">${t('apply')}</button>
+      <button class="ghost small" type="button" data-action="room-fit">${t('room_fit')}</button>
+    </form>
+    <p class="muted small-text">${t('drag_hint_edit')}</p>
+    <div class="floor-wrap">${svg}</div>
+    ${sel ? `<form data-form="table" class="panel stack">
       <input type="hidden" name="id" value="${sel.id}">
       <div class="grid2">
         <label>${t('table_name')}<input name="label" value="${esc(sel.label)}" required maxlength="20"></label>
@@ -541,11 +665,11 @@ function viewLayouts() {
           <option value="round" ${sel.shape === 'round' ? 'selected' : ''}>${t('round')}</option></select></label>
         <label>${t('floor')}<select name="floor">${[1, 2].map((f) => `<option ${sel.floor === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
       </div>
-      <div class="row">
-        <button class="primary" type="submit">${t('save')}</button>
+      <div class="row wrap">
+        <button class="primary" type="submit">${t('apply')}</button>
         <button class="ghost danger" type="button" data-action="table-remove" data-id="${sel.id}">${t('remove_table')}</button>
       </div>
-    </form>` : ''}
+    </form>` : `<p class="muted small-text">${t('tap_to_edit')}</p>`}
   </section>`;
 }
 
@@ -835,10 +959,19 @@ async function applyNightLayout(layoutId, mapping) {
 // ───────── Events ─────────
 const actions = {
   async lang() { setLang(getLang() === 'th' ? 'en' : 'th'); document.documentElement.lang = getLang(); closeModal(); render(); },
-  async logout() { closeModal(); await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
-  view(el) { closeModal(); S.view = el.dataset.v; S.selTable = null; render(); window.scrollTo(0, 0); },
+  async logout() { if (!confirmLeaveEdit()) return; closeModal(); await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
+  view(el) { if (S.view === 'layouts' && el.dataset.v !== 'layouts' && !confirmLeaveEdit()) return; closeModal(); S.view = el.dataset.v; S.selTable = null; render(); window.scrollTo(0, 0); },
   floor(el) { S.floor = Number(el.dataset.f); render(); },
   'edit-floor'(el) { S.editFloor = Number(el.dataset.f); S.selTable = null; render(); },
+  'edit-start'() { startEdit(); },
+  'edit-cancel'() { if (confirmLeaveEdit()) { S.selTable = null; render(); } },
+  'edit-save'() { return saveEdit(); },
+  undo() { if (!S.edit?.undo.length) return; S.edit.redo.push(snapshot()); restore(S.edit.undo.pop()); render(); },
+  redo() { if (!S.edit?.redo.length) return; S.edit.undo.push(snapshot()); restore(S.edit.redo.pop()); render(); },
+  'room-fit'() {
+    const items = S.edit.items.filter((x) => x.floor === S.editFloor);
+    if (items.length) change(() => { S.edit.rooms[S.editFloor] = boundsOf(items); });
+  },
   async 'night-prev'() { await goNight(T.addDays(S.night, -1)); },
   async 'night-next'() { await goNight(T.addDays(S.night, 1)); },
   async 'night-today'() { await goNight(T.nightOf(Date.now(), S.settings)); },
@@ -894,11 +1027,14 @@ const actions = {
     try { await run(sb.from('layouts').delete().eq('id', S.editLayoutId)); S.editLayoutId = null; await reload(); }
     catch (e) { toast(errMsg(e), true); }
   },
-  'table-add'() { return addItem('table'); },
-  async 'table-remove'(el) {
-    if (!confirm(t('confirm_remove_table'))) return;
-    try { await run(sb.from('tables').update({ archived: true }).eq('id', el.dataset.id)); S.selTable = null; await reload(); }
-    catch (e) { toast(errMsg(e), true); }
+  'table-add'() { addItem('table'); },
+  'table-remove'(el) {
+    const id = el.dataset.id;
+    change(() => {
+      S.edit.items = S.edit.items.filter((x) => x.id !== id);
+      if (!id.startsWith('new-')) S.edit.removed.push(id);
+      S.selTable = null;
+    });
   },
 };
 
@@ -926,7 +1062,7 @@ const changes = {
   slip(el) { const f = el.files?.[0]; if (f) uploadSlip(el.dataset.id, f); },
   'night-layout'(el) { changeNightLayout(el.value); },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
-  'edit-layout'(el) { S.editLayoutId = el.value; S.selTable = null; render(); },
+  'edit-layout'(el) { if (!confirmLeaveEdit()) { el.value = S.editLayoutId; return; } S.editLayoutId = el.value; S.selTable = null; render(); },
   async 'staff-role'(el) {
     try { await run(sb.from('profiles').update({ role: el.value }).eq('id', el.dataset.id)); await reload(); toast(t('saved')); }
     catch (e) { toast(errMsg(e), true); await reload(); }
@@ -957,13 +1093,20 @@ const forms = {
     if (error) toast(errMsg(error), true);
   },
   booking(f) { return saveBooking(f, false); },
-  async table(f) {
+  table(f) {
     const v = Object.fromEntries(new FormData(f));
-    try {
-      await run(sb.from('tables').update({ label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h),
-        ...('color' in v ? { color: v.color || null, price: v.price === '' ? null : Number(v.price) } : {}) }).eq('id', v.id));
-      S.editFloor = Number(v.floor); toast(t('saved')); await reload();
-    } catch (e) { toast(errMsg(e), true); }
+    const it = draftItem(v.id);
+    if (!it) return;
+    change(() => {
+      Object.assign(it, { label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h) });
+      if ('color' in v) Object.assign(it, { color: v.color || null, price: v.price === '' ? null : Number(v.price) });
+      S.editFloor = it.floor;
+    });
+  },
+  room(f) {
+    const v = Object.fromEntries(new FormData(f));
+    const w = Math.max(100, Number(v.w)), h = Math.max(100, Number(v.h));
+    change(() => { S.edit.rooms[S.editFloor] = { w, h }; });
   },
   async staff(f) {
     const v = Object.fromEntries(new FormData(f));
@@ -995,41 +1138,76 @@ document.addEventListener('submit', (e) => {
   forms[f.dataset.form]?.(f);
 });
 
-// Drag tables in the layout editor.
+// Drag in edit mode: items snap to walls and to neighbours' edges; the corner handle resizes the room.
 let drag = null;
 function svgPoint(svg, e) {
   const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
   return p.matrixTransform(svg.getScreenCTM().inverse());
 }
+const SNAP = 10;
+function snapAxis(pos, half, wall, others) {
+  // candidates: flush to wall start/end, flush or aligned to neighbours
+  const lo = pos - half, hi = pos + half;
+  let best = null;
+  const consider = (target, edge) => {
+    const d = Math.abs(edge - target);
+    if (d <= SNAP && (!best || d < best.d)) best = { d, pos: pos + (target - edge) };
+  };
+  consider(0, lo); consider(wall, hi);
+  for (const [a, b] of others) { consider(b, lo); consider(a, hi); consider(a, lo); consider(b, hi); }
+  const p = best ? best.pos : Math.round(pos);
+  return Math.min(wall - half, Math.max(half, p));
+}
 document.addEventListener('pointerdown', (e) => {
-  const g = e.target.closest('#editor-svg [data-tid]');
-  if (!g) return;
-  const tb = tableById(g.dataset.tid);
-  const p = svgPoint($('#editor-svg'), e);
-  drag = { g, tb, dx: p.x - tb.x, dy: p.y - tb.y, nx: tb.x, ny: tb.y, moved: false };
-  g.setPointerCapture(e.pointerId);
+  if (!S.edit) return;
+  const svg = $('#editor-svg');
+  if (!svg || !svg.contains(e.target)) return;
+  if (e.target.closest('[data-handle=room]')) {
+    drag = { room: true, before: snapshot(), moved: false };
+  } else {
+    const g = e.target.closest('[data-tid]');
+    if (!g) return;
+    const it = draftItem(g.dataset.tid);
+    if (!it) return;
+    const p = svgPoint(svg, e);
+    drag = { it, g, dx: p.x - it.x, dy: p.y - it.y, before: snapshot(), moved: false };
+    S.selTable = it.id;
+  }
+  e.target.setPointerCapture?.(e.pointerId);
   e.preventDefault();
 });
 document.addEventListener('pointermove', (e) => {
   if (!drag) return;
-  const p = svgPoint($('#editor-svg'), e);
-  const { w: sw, h: sh } = sizeOf(drag.tb);
-  const snap = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(v)));
-  drag.nx = snap(p.x - drag.dx, sw / 2, CANVAS.w - sw / 2);
-  drag.ny = snap(p.y - drag.dy, sh / 2, CANVAS.h - sh / 2);
-  drag.moved = drag.moved || drag.nx !== drag.tb.x || drag.ny !== drag.tb.y;
-  drag.g.setAttribute('transform', `translate(${drag.nx - drag.tb.x} ${drag.ny - drag.tb.y})`);
+  const svg = $('#editor-svg');
+  const p = svgPoint(svg, e);
+  const room = S.edit.rooms[S.editFloor];
+  if (drag.room) {
+    const items = S.edit.items.filter((x) => x.floor === S.editFloor);
+    const min = boundsOf(items);
+    room.w = Math.max(min.w - 24, 100, Math.round(p.x));
+    room.h = Math.max(min.h - 24, 100, Math.round(p.y));
+    drag.moved = true;
+    const r = svg.querySelector('rect.room'); r.setAttribute('width', room.w); r.setAttribute('height', room.h);
+    const c = svg.querySelector('[data-handle=room] circle'); c.setAttribute('cx', room.w); c.setAttribute('cy', room.h);
+    return;
+  }
+  const { it } = drag, { w, h } = sizeOf(it);
+  const others = S.edit.items.filter((x) => x.floor === it.floor && x.id !== it.id).map((x) => ({ ...x, ...sizeOf(x) }));
+  const nx = snapAxis(p.x - drag.dx, w / 2, room.w, others.map((o) => [o.x - o.w / 2, o.x + o.w / 2]));
+  const ny = snapAxis(p.y - drag.dy, h / 2, room.h, others.map((o) => [o.y - o.h / 2, o.y + o.h / 2]));
+  drag.moved = drag.moved || nx !== it.x || ny !== it.y;
+  drag.nx = nx; drag.ny = ny;
+  drag.g.setAttribute('transform', `translate(${nx - it.x} ${ny - it.y})`);
 });
-document.addEventListener('pointerup', async () => {
+document.addEventListener('pointerup', () => {
   if (!drag) return;
   const d = drag; drag = null;
-  S.selTable = d.tb.id;
   if (d.moved) {
-    d.tb.x = d.nx; d.tb.y = d.ny;
-    render();
-    try { await run(sb.from('tables').update({ x: d.nx, y: d.ny }).eq('id', d.tb.id)); }
-    catch (e) { toast(errMsg(e), true); await reload(); }
-  } else render();
+    S.edit.undo.push(d.before); S.edit.redo = [];
+    if (!d.room) { d.it.x = d.nx; d.it.y = d.ny; }
+  }
+  render();
 });
+window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
 init();

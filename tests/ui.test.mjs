@@ -186,49 +186,74 @@ try {
   await shot('07-summary');
   step('nightly summary numbers');
 
-  // Layout editor: add, drag, edit, duplicate
+  // Layout editor: view mode is read-only; edit mode keeps a draft with undo/redo until Save
   await go('layouts');
+  const before = JSON.stringify((await db()).tables);
+  const t1box = await page.locator('#editor-svg [data-tid="T1"]').boundingBox();
+  await page.mouse.move(t1box.x + 10, t1box.y + 10); await page.mouse.down();
+  await page.mouse.move(t1box.x + 120, t1box.y + 80, { steps: 4 }); await page.mouse.up();
+  assert.equal(JSON.stringify((await db()).tables), before, 'dragging outside edit mode changes nothing');
+  assert.ok(await page.locator('[data-action=table-add]').count() === 0, 'no add buttons outside edit mode');
+
+  await page.click('[data-action=edit-start]');
   await page.click('[data-action=table-add]');
   await page.waitForSelector('form[data-form=table]');
-  d = await db();
-  const added = d.tables.find((x) => x.layout_id === 'L1' && !['T1', 'T2', 'T3', 'F1'].includes(x.id));
-  assert.equal(added?.label, 'T4', 'new table gets next free name');
-  const box = await page.locator(`#editor-svg [data-tid="${added.id}"]`).boundingBox();
+  assert.equal((await db()).tables.length, JSON.parse(before).length, 'nothing saved before Save');
+  const newId = await page.getAttribute('#editor-svg .tbl.sel', 'data-tid');
+  assert.match(newId, /^new-/);
+  const box = await page.locator(`#editor-svg [data-tid="${newId}"]`).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 - 100, box.y + box.height / 2 + 60, { steps: 5 });
+  await page.mouse.move(box.x - 600, box.y + box.height / 2 + 20, { steps: 6 });
   await page.mouse.up();
-  await page.waitForTimeout(100);
-  d = await db();
-  const moved = d.tables.find((x) => x.id === added.id);
-  assert.ok(moved.x < 500 && moved.y > 350, `table moved (${moved.x},${moved.y})`);
   await page.fill('form[data-form=table] [name=label]', 'Bar 1');
   await page.fill('form[data-form=table] [name=seats]', '6');
   await page.selectOption('form[data-form=table] [name=shape]', 'round');
   await page.click('form[data-form=table] button[type=submit]');
-  await page.waitForTimeout(100);
-  d = await db();
-  assert.deepEqual([d.tables.find((x) => x.id === added.id).label, d.tables.find((x) => x.id === added.id).seats], ['Bar 1', 6]);
+  assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'Bar 1');
+  await page.click('[data-action=undo]');
+  assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'T4', 'undo restores previous name');
+  await page.click('[data-action=redo]');
+  assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'Bar 1', 'redo re-applies');
+  await page.selectOption('[data-change=add-element]', 'speaker');
+  await page.waitForSelector('#editor-svg .fx-speaker');
+  await page.fill('form[data-form=room] [name=w]', '900');
+  await page.click('form[data-form=room] button[type=submit]');
   await shot('08-layout-editor');
+  await page.click('[data-action=edit-save]');
+  await page.waitForSelector('[data-action=edit-start]');
+  d = await db();
+  const bar1 = d.tables.find((x) => x.label === 'Bar 1');
+  assert.ok(bar1 && bar1.seats === 6 && bar1.shape === 'round', 'saved new table');
+  assert.equal(bar1.x, 32, 'dragged past the wall -> sits flush against it');
+  assert.equal(d.tables.filter((x) => x.kind === 'speaker').length, 1, 'saved speaker');
+  assert.equal(d.layouts.find((l) => l.id === 'L1').rooms['1'].w, 900, 'room size saved');
+  step('layout editor: read-only until Edit; draft, wall snap, undo/redo, room size, Save');
+
+  // Cancel discards the draft
+  await page.click('[data-action=edit-start]');
+  const t2box = await page.locator('#editor-svg [data-tid="T2"]').boundingBox();
+  await page.mouse.move(t2box.x + 10, t2box.y + 10); await page.mouse.down();
+  await page.mouse.move(t2box.x + 90, t2box.y + 90, { steps: 4 }); await page.mouse.up();
+  await page.click('[data-action=edit-cancel]');
+  assert.equal((await db()).tables.find((x) => x.id === 'T2').x, 400, 'cancel keeps saved position');
+  step('cancel discards unsaved moves');
+
   promptAnswer = 'Concert';
   await page.click('[data-action=layout-dup]');
   await page.waitForTimeout(100);
   d = await db();
   const concert = d.layouts.find((l) => l.name === 'Concert');
-  assert.equal(d.tables.filter((x) => x.layout_id === concert.id).length, 5, '4 tables + stage copied');
-  await page.selectOption('[data-change=add-element]', 'speaker');
-  await page.waitForSelector('#editor-svg .fx-speaker');
-  d = await db();
-  const spk = d.tables.find((x) => x.kind === 'speaker');
-  assert.equal(spk?.seats, 0); assert.equal(spk.layout_id, concert.id, 'added to the layout being edited');
-  step('layout editor: add, drag, edit, duplicate, add speaker element');
+  assert.equal(d.tables.filter((x) => x.layout_id === concert.id).length, 6, 'all tables and elements copied');
 
   // Remove a table from Concert, then switch tonight to Concert -> mapping dialog
   const cT2 = d.tables.find((x) => x.layout_id === concert.id && x.label === 'T2');
   await page.selectOption('[data-change=edit-layout]', concert.id);
+  await page.click('[data-action=edit-start]');
   await page.click(`#editor-svg [data-tid="${cT2.id}"]`);
   await page.click('[data-action=table-remove]');
-  await page.waitForTimeout(100);
+  await page.click('[data-action=edit-save]');
+  await page.waitForSelector('[data-action=edit-start]');
   assert.ok((await db()).tables.find((x) => x.id === cT2.id).archived);
   await go('map');
   await page.selectOption('[data-change=night-layout]', concert.id);

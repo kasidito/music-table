@@ -1,5 +1,8 @@
 const DICT = {
   th: {
+    edit_layout: 'แก้ไขผัง', undo: 'ย้อนกลับ', redo: 'ทำซ้ำ', editing: 'กำลังแก้ไข', unsaved: 'ยังไม่บันทึก', cancel: 'ยกเลิก',
+    room_size: 'ขนาดห้อง', depth: 'ลึก', apply: 'ใช้', room_fit: 'พอดีกับของในห้อง', drag_hint_edit: 'ลากเพื่อย้าย ลากเข้าใกล้ผนังจะชิดพอดี ลากวงกลมมุมขวาล่างเพื่อขยายห้อง',
+    tap_to_edit: 'แตะโต๊ะหรือองค์ประกอบเพื่อแก้รายละเอียด', confirm_discard: 'ทิ้งการแก้ไขที่ยังไม่บันทึก?', save_partial: 'บันทึกได้บางส่วน:',
     paid: 'จ่ายแล้ว', unpaid: 'ค้างจ่าย', payment: 'การชำระเงิน', amount_due: 'ยอดที่ต้องจ่าย', paid_by: 'บันทึกโดย', attach_slip: 'แนบสลิป', replace_slip: 'เปลี่ยนสลิป',
     mark_paid: 'บันทึกว่าจ่ายแล้ว', mark_paid_no_slip: 'จ่ายแล้ว (ไม่มีสลิป)', mark_unpaid: 'ยกเลิกสถานะจ่าย', confirm_unpaid: 'เปลี่ยนเป็นค้างจ่าย?', slip: 'สลิปโอนเงิน',
     uploading: 'กำลังอัปโหลดสลิป…', err_image: 'เปิดรูปนี้ไม่ได้ ลองถ่ายใหม่', max_pax: 'สูงสุด {n} คน', tier_color: 'สีโซน', price: 'ราคา (บาท)', none: 'ไม่มี',
@@ -46,6 +49,9 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    edit_layout: 'Edit layout', undo: 'Undo', redo: 'Redo', editing: 'Editing', unsaved: 'unsaved', cancel: 'Cancel',
+    room_size: 'Room size', depth: 'Depth', apply: 'Apply', room_fit: 'Fit to contents', drag_hint_edit: 'Drag to move; near a wall it snaps flush. Drag the bottom-right circle to resize the room.',
+    tap_to_edit: 'Tap a table or element to edit its details', confirm_discard: 'Discard unsaved changes?', save_partial: 'Saved with problems:',
     paid: 'Paid', unpaid: 'Unpaid', payment: 'Payment', amount_due: 'amount due', paid_by: 'Marked by', attach_slip: 'Attach slip', replace_slip: 'Replace slip',
     mark_paid: 'Mark as paid', mark_paid_no_slip: 'Paid (no slip)', mark_unpaid: 'Mark unpaid', confirm_unpaid: 'Change to unpaid?', slip: 'Transfer slip',
     uploading: 'Uploading slip…', err_image: "Couldn't open this photo. Try again.", max_pax: 'max {n}', tier_color: 'Zone color', price: 'Price (THB)', none: 'None',

@@ -53,4 +53,8 @@ select t_assert((select not paid and paid_at is null and paid_by is null from bo
 select t_assert((select count(*) from booking_history h join bookings b on b.id = h.booking_id where b.guest_name = 'Fan' and h.old_row->>'paid' <> h.new_row->>'paid') = 2, 'payment changes in history');
 reset role;
 
+-- ── Rooms ──
+select t_assert((select rooms->'1'->>'w' from layouts where name = 'Purpeech') = '709', 'Purpeech room size');
+select t_assert((select (rooms->'1'->>'w')::int > 0 from layouts where name = 'Copy'), 'duplicate keeps rooms');
+
 select 'PRESET TESTS PASSED' as result;

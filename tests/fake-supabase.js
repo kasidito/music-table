@@ -105,7 +105,7 @@
     async rpc(name, a) {
       if (name === 'duplicate_layout') {
         const id = uid();
-        db.layouts.push({ id, name: a.p_name, is_default: false, created_at: now() });
+        db.layouts.push({ id, name: a.p_name, is_default: false, created_at: now(), rooms: JSON.parse(JSON.stringify(db.layouts.find((l) => l.id === a.p_layout).rooms ?? {})) });
         db.tables.filter((x) => x.layout_id === a.p_layout && !x.archived)
           .forEach((x) => db.tables.push({ ...x, id: uid(), layout_id: id }));
         return { data: id, error: null };

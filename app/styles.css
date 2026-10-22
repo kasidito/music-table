@@ -174,7 +174,21 @@ svg.floor {
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
   background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 32px 32px;
 }
-svg.editor { touch-action: none; }
+svg.editor.editing { touch-action: none; }
+.room { fill: none; stroke: #6b5d52; stroke-width: 6; }
+.room-handle { cursor: nwse-resize; }
+.room-handle circle { fill: var(--accent); stroke: var(--bg); stroke-width: 3; }
+.room-handle path { stroke: var(--accent-text); stroke-width: 2; }
+.editbar {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  background: var(--raised); border: 1px solid var(--accent); border-radius: 14px; padding: 8px; margin-bottom: 10px;
+}
+.edit-title { font-weight: 600; font-size: 14px; }
+.dirty { font-style: normal; font-size: 12px; color: var(--accent); }
+.icon-btn { min-height: 44px; padding: 0 10px; background: transparent; }
+.icon-btn:disabled, button:disabled { opacity: .4; cursor: default; }
+.room-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.room-bar input { width: 90px; min-height: 36px; }
 .tbl { cursor: pointer; }
 .tbl circle, .tbl rect, .tbl ellipse { fill: var(--surface2); stroke: #4a3f37; stroke-width: 2.5; }
 .tbl text { fill: var(--text); text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
