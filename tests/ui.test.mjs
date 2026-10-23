@@ -311,6 +311,7 @@ try {
   await page.fill('form[data-form=table] [name=label]', 'Bar 1');
   await page.fill('form[data-form=table] [name=seats]', '6');
   await page.selectOption('form[data-form=table] [name=shape]', 'round');
+  await page.fill('form[data-form=table] [name=set_note]', 'Monkey 1 ขวด');
   await page.click('form[data-form=table] button[type=submit]');
   assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'Bar 1');
   await page.click('[data-action=undo]');
@@ -326,7 +327,7 @@ try {
   await page.waitForSelector('[data-action=edit-start]');
   d = await db();
   const bar1 = d.tables.find((x) => x.label === 'Bar 1');
-  assert.ok(bar1 && bar1.seats === 6 && bar1.shape === 'round', 'saved new table');
+  assert.ok(bar1 && bar1.seats === 6 && bar1.shape === 'round' && bar1.set_note === 'Monkey 1 ขวด', 'saved new table with set drinks');
   assert.equal(bar1.x, 32, 'dragged past the wall -> sits flush against it');
   assert.equal(d.tables.filter((x) => x.kind === 'speaker').length, 1, 'saved speaker');
   assert.equal(d.layouts.find((l) => l.id === 'L1').rooms['1'].w, 900, 'room size saved');

@@ -433,7 +433,7 @@ function viewBoxFor(items, room, pad = 12) {
 const wallsSvg = (room) => `<rect class="room" x="0" y="0" width="${room.w}" height="${room.h}" rx="4"/>`;
 
 // ───────── Layout edit mode: a local draft with undo/redo, saved only on Save ─────────
-const EDIT_FIELDS = ['label', 'seats', 'shape', 'floor', 'x', 'y', 'w', 'h', 'color', 'price', 'kind'];
+const EDIT_FIELDS = ['label', 'seats', 'shape', 'floor', 'x', 'y', 'w', 'h', 'color', 'price', 'kind', 'set_note'];
 let newSeq = 0;
 function startEdit() {
   const lay = S.layouts.find((l) => l.id === S.editLayoutId);
@@ -779,7 +779,8 @@ function viewLayouts() {
           <option value="">${t('none')}</option>
           ${TIER_COLORS.map(([c, k]) => `<option value="${c}" ${sel.color === c ? 'selected' : ''}>${t(k)}</option>`).join('')}
         </select></label>
-        <label>${t('price')}<input name="price" type="number" min="0" step="100" inputmode="numeric" value="${sel.price ?? ''}" placeholder="—"></label>` : ''}
+        <label>${t('price')}<input name="price" type="number" min="0" step="100" inputmode="numeric" value="${sel.price ?? ''}" placeholder="—"></label>
+        <label>${t('set_drinks')}<input name="set_note" maxlength="80" value="${esc(sel.set_note ?? '')}" placeholder="Monkey 1 ขวด"></label>` : ''}
         <label>${t('width')}<input name="w" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).w}" required></label>
         <label>${t('height')}<input name="h" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).h}" required></label>
         <label>${t('shape')}<select name="shape">
@@ -1977,7 +1978,7 @@ const forms = {
     if (!it) return;
     change(() => {
       Object.assign(it, { label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h) });
-      if ('color' in v) Object.assign(it, { color: v.color || null, price: v.price === '' ? null : Number(v.price) });
+      if ('color' in v) Object.assign(it, { color: v.color || null, price: v.price === '' ? null : Number(v.price), set_note: v.set_note.trim() || null });
       S.editFloor = it.floor;
     });
   },

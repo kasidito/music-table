@@ -24,7 +24,7 @@ Staff-only table booking app for the bar. Web app (phone/tablet browser) + Supab
 - **Customer types** (Settings → ประเภทลูกค้า / ส่วนลด): each can carry a discount %, taken off the table price. "ราคาที่ขายได้" on a booking overrides it.
 - **Booking length** (Settings): *whole night* (default) — a booking holds its table until closing; or *fixed length* for venues that turn tables.
 - **Concert report** (More → รีพอร์ตคอนเสิร์ต, or the button on a concert night's map): the bar's sheet layout, wristband ticks, Excel download (opens in Google Sheets).
-- Set drinks per table are edited in the layout editor data (`tables.set_note`).
+- Set drinks per table (เครื่องดื่มในเซ็ต): แก้ผัง → แก้ไขผัง → tap a table.
 
 ## Good to know
 
