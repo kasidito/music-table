@@ -650,3 +650,12 @@ body::before {
   content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top, 0px);
   background: var(--bg); z-index: 50; pointer-events: none;
 }
+
+/* Concert walk-in form */
+.walkin-total { margin-top: 10px; font-size: 1.05rem; }
+.walkin-total b { font-size: 1.3rem; color: var(--accent); }
+.wb-check-row { background: transparent; padding: 0; font-size: 1rem; }
+.walkin-row { margin: 4px 0 8px; gap: 8px; color: var(--text); }
+.walkin-row input { width: 110px; min-height: 40px; }
+.door > .primary.big { margin: 10px 0 0; }
+.walkin-method { margin-top: 12px; }

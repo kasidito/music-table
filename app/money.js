@@ -1,6 +1,6 @@
 // Amounts due and payment status for a booking. Mirrors public.booking_due() in the database.
 
-export const tableIdsOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])];
+export const tableIdsOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])].filter(Boolean);
 
 // List price of every table on the booking.
 export const listPriceOf = (b, tableById) => tableIdsOf(b).reduce((n, id) => n + (tableById(id)?.price ?? 0), 0);

@@ -43,7 +43,8 @@ export const startMs = (b) => Date.parse(b.start_at);
 export const endMs = (b) => startMs(b) + b.duration_min * 60000;
 export const isActive = (b) => b.status === 'booked' || b.status === 'seated';
 // A booking can hold more than one table (combined tables).
-export const tablesOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])];
+// Standing walk-ins have no table.
+export const tablesOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])].filter(Boolean);
 const holds = (b, tableId) => b.table_id === tableId || (b.extra_table_ids ?? []).includes(tableId);
 
 // wholeNight: a booking holds its table for the whole night, so any active booking on the same table clashes.

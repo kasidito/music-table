@@ -173,6 +173,40 @@ try {
   await page.screenshot({ path: path.join(SHOTS, 'features-cashup.png'), fullPage: true });
   step('cash-up: by method, by staff, drawer short/over');
 
+  // Concert walk-ins: standing ticket (price per person, paid in cash) and a free table sold at the door
+  await page.evaluate(() => { window.__db.layouts[0].walkin_price = 700; });
+  await page.evaluate(() => window.__emit('layouts', { eventType: 'UPDATE', new: {}, old: {} }));
+  await page.waitForTimeout(400);
+  await more('door');
+  await page.click('[data-action=walkin-new]');
+  await page.waitForSelector('form[data-form=walkin]');
+  assert.equal(await page.inputValue('form[data-form=walkin] [name=price]'), '700', 'price comes from the concert layout');
+  await page.click('form[data-form=walkin] [data-action=step][data-d="1"]');
+  await page.click('form[data-form=walkin] [data-action=step][data-d="1"]');
+  assert.match(await page.textContent('#walkin-total'), /2,100฿/);
+  await page.click('form[data-form=walkin] button[type=submit]');
+  await page.waitForSelector('#modal', { state: 'hidden' });
+  d = await db();
+  const stand = d.bookings.find((b) => b.is_walk_in && !b.table_id);
+  assert.ok(stand && stand.party_size === 3 && stand.sold_price === 2100 && stand.pay_status === 'paid' && stand.wristband_at && stand.status === 'seated', 'standing walk-in saved');
+  assert.ok(d.booking_payments.some((p) => p.booking_id === stand.id && p.amount === 2100 && p.method === 'cash'), 'cash recorded for cash-up');
+  await page.click('[data-action=walkin-new]');
+  await page.selectOption('form[data-form=walkin] [name=table_id]', 'T1');
+  assert.ok(await page.locator('form[data-form=walkin] .walkin-price').isHidden(), 'table walk-in uses the table price');
+  assert.match(await page.textContent('#walkin-total'), /3,300฿/);
+  await page.click('form[data-form=walkin] .chip-radio:has-text("จ่ายหน้างาน")');
+  await page.click('form[data-form=walkin] button[type=submit]');
+  await page.waitForSelector('#modal', { state: 'hidden' });
+  d = await db();
+  assert.ok(d.bookings.some((b) => b.is_walk_in && b.table_id === 'T1' && b.pay_status === 'at_venue'), 'table walk-in saved');
+  assert.match(await page.textContent('.stats-row'), /3 คนยืน/);
+  await more('concert');
+  await page.waitForSelector('.xsheet');
+  assert.match(await page.textContent('.xsheet'), /ยืน \(ไม่มีโต๊ะ\)/);
+  assert.match(await page.textContent('.xsheet'), /Walk-in/);
+  await page.screenshot({ path: path.join(SHOTS, 'features-walkin.png'), fullPage: true });
+  step('concert walk-ins: standing ticket + table at the door, in report and cash-up');
+
   // Products: add a package in settings, it appears in the booking extras picker
   await more('settings');
   const newRow = page.locator('form[data-form=product]').last();

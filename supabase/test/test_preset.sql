@@ -158,4 +158,18 @@ select t_assert((select count(*) from booking_history h join bookings b on b.id 
 select t_assert((select bool_and(set_note is not null) from tables t join layouts l on l.id = t.layout_id where l.name = 'Greasy Cafe' and t.kind = 'table'), 'Greasy set drinks');
 reset role;
 
+-- ── 013: standing walk-ins, walk-in price per layout ──
+select t_assert((select walkin_price from layouts where name = 'Purpeech') = 700, 'Purpeech walk-in price');
+set role authenticated;
+select t_login('00000000-0000-0000-0000-00000000000b');
+insert into bookings (table_id, start_at, duration_min, party_size, guest_name, phone, is_walk_in, status, sold_price, pay_status, wristband_at)
+values (null, '2030-04-01 21:00+07', 300, 3, '', '', true, 'seated', 2100, 'paid', now());
+select t_assert((select booking_due(id) = 2100 and paid and wristband_at is not null from bookings where table_id is null), 'standing walk-in: due = ticket price, paid, wristband');
+select t_expect_error($q$insert into bookings (table_id, start_at, duration_min, party_size, guest_name, phone) values (null, '2030-04-01 21:00+07', 120, 2, 'x', '0812345670')$q$, 'table_required');
+select t_expect_error($q$insert into bookings (table_id, extra_table_ids, start_at, duration_min, party_size, guest_name, phone, is_walk_in, status)
+  values (null, array[(select t.id from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.label = 'A9')], '2030-04-01 21:00+07', 120, 2, '', '', true, 'seated')$q$, 'invalid_extra_tables');
+update bookings set table_id = (select t.id from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.label = 'A9') where table_id is null;
+select t_assert((select count(*) from bookings b join tables t on t.id = b.table_id where t.label = 'A9' and b.is_walk_in) = 1, 'standing walk-in can be given a table later');
+reset role;
+
 select 'PRESET TESTS PASSED' as result;

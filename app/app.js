@@ -104,7 +104,8 @@ function payPill(b) {
 const catChip = (b) => { const c = categoryById(b.category_id); return c ? `<span class="cat-chip" style="--c:${esc(c.color)}">${esc(c.name)}</span>` : ''; };
 // Concert night = tonight's layout sells tables (has prices).
 const isConcertLayout = (lid) => tablesOf(lid).some((x) => x.price != null);
-const tablesLabel = (b) => tableIdsOf(b).map((id) => tableById(id)?.label ?? '?').join('+');
+const tablesLabel = (b) => (b.table_id ? tableIdsOf(b).map((id) => tableById(id)?.label ?? '?').join('+') : t('standing'));
+const floorText = (b) => (b.table_id ? `${t('floor')} ${tableById(b.table_id)?.floor ?? ''}` : t('no_table'));
 const tableLabel = (id) => { const x = tableById(id); return x ? `${x.label} · ${t('floor')} ${x.floor}` : '—'; };
 
 function atMs() {
@@ -255,7 +256,8 @@ async function checkForUpdate() {
 // ───────── Views ─────────
 function render() {
   const app = $('#app');
-  if (!S.user) { app.innerHTML = viewLogin(); return; }
+  // Keep what's typed in the login form if a late background refresh re-renders.
+  if (!S.user) { if (!app.querySelector('form[data-form=login]')) app.innerHTML = viewLogin(); return; }
   if (!S.me) { app.innerHTML = `<div class="center muted">${t('loading')}</div>`; return; }
   if (!S.me.active) { app.innerHTML = viewInactive(); return; }
   if (!S.settings) { app.innerHTML = `<div class="center muted">${t('loading')}</div>`; return; }
@@ -364,6 +366,7 @@ function statsRow() {
   return `<div class="stats-row">
     <span class="chip"><b>${T.tablesBooked(S.bookings)}</b>/${total} ${t('tables_booked')}</span>
     <span class="chip ${seats.used > seats.cap ? 'late' : ''}"><b>${seats.used}</b>/${seats.cap} ${t('seats_word')}</span>
+    ${standingCount() ? `<span class="chip"><b>${standingCount()}</b> ${t('standing_people')}</span>` : ''}
     <span class="chip"><b class="c-seated">${seated}</b> ${t('seated_now')}</span>
     ${late ? `<span class="chip late"><b>${late}</b> ${t('late')}</span>` : ''}
     ${unpaid ? `<button class="chip unpaid" data-action="view" data-v="list"><b>${unpaid}</b> ${t('unpaid')}</button>` : ''}
@@ -460,6 +463,7 @@ function startEdit() {
     items: S.tables.filter((x) => x.layout_id === lay.id && !x.archived).map((x) => ({ ...x, ...sizeOf(x) })),
     removed: [],
     rooms: JSON.parse(JSON.stringify(lay.rooms ?? {})),
+    walkin_price: lay.walkin_price ?? null,
     undo: [], redo: [],
   };
   for (const f of [1, 2]) {
@@ -471,7 +475,7 @@ function startEdit() {
   S.edit.start = snapshot();
   render();
 }
-const snapshot = () => JSON.stringify({ items: S.edit.items, removed: S.edit.removed, rooms: S.edit.rooms, zones: S.edit.zones ?? [] });
+const snapshot = () => JSON.stringify({ items: S.edit.items, removed: S.edit.removed, rooms: S.edit.rooms, zones: S.edit.zones ?? [], walkin_price: S.edit.walkin_price ?? null });
 function restore(snap) { Object.assign(S.edit, JSON.parse(snap)); }
 const isDirty = () => !!S.edit && snapshot() !== S.edit.start;
 function change(fn) {
@@ -530,8 +534,8 @@ async function saveEdit() {
     catch (err) { errors.push(`${orig.get(id)?.label ?? ''}: ${errMsg(err)}`); }
   }
   const lay = S.layouts.find((l) => l.id === e.layoutId);
-  if (JSON.stringify(lay.rooms ?? {}) !== JSON.stringify(e.rooms)) {
-    try { await run(sb.from('layouts').update({ rooms: e.rooms }).eq('id', e.layoutId)); }
+  if (JSON.stringify(lay.rooms ?? {}) !== JSON.stringify(e.rooms) || (lay.walkin_price ?? null) !== (e.walkin_price ?? null)) {
+    try { await run(sb.from('layouts').update({ rooms: e.rooms, walkin_price: e.walkin_price ?? null }).eq('id', e.layoutId), 'layout.update'); }
     catch (err) { errors.push(errMsg(err)); }
   }
   S.edit = null;
@@ -540,11 +544,12 @@ async function saveEdit() {
   else toast(t('saved'));
 }
 
+const standingCount = () => S.bookings.filter((b) => T.isActive(b) && !b.table_id).reduce((n, b) => n + b.party_size, 0);
 // Seats: guests booked against table capacity (whole night, or one floor). A combined booking counts at its main table.
 const bookingSeats = (b) => T.tablesOf(b).reduce((n, id) => n + (tableById(id)?.seats ?? 0), 0);
 function seatUse(floor) {
   const cap = tablesOf(nightLayoutId(), floor).reduce((n, x) => n + (x.seats ?? 0), 0);
-  const used = S.bookings.filter((b) => T.isActive(b) && (!floor || tableById(b.table_id)?.floor === floor))
+  const used = S.bookings.filter((b) => T.isActive(b) && b.table_id && (!floor || tableById(b.table_id)?.floor === floor))
     .reduce((n, b) => n + b.party_size, 0);
   return { used, cap };
 }
@@ -669,7 +674,7 @@ function bookingRow(b) {
   return `<button class="brow st-${b.status}" data-action="open-booking" data-id="${b.id}">
     <span class="time">${hhmm(b.start_at)}</span>
     <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong> ${catChip(b)}
-      <span class="muted small-text"> ${esc(tablesLabel(b))} · ${t('floor')} ${tableById(b.table_id)?.floor ?? ''} · ${ICON.person} ${b.party_size}</span>
+      <span class="muted small-text"> ${esc(tablesLabel(b))} · ${floorText(b)} · ${ICON.person} ${b.party_size}</span>
       ${b.confirmed_at ? `<span class="small-text c-ok">${ICON.check} ${t('confirmed')}</span>` : ''}
       ${b.note ? `<span class="muted small-text note">${esc(b.note)}</span>` : ''}</span>
     <span class="pills">${payPill(b)}<span class="pill st-${st}">${st === 'late' ? t('late') : t('st_' + b.status)}</span></span>
@@ -774,6 +779,90 @@ function cashUpText() {
   ].filter(Boolean).join('\n');
 }
 
+// ───────── Concert walk-ins ─────────
+// Two kinds: standing (no table, ticket price per person) or a free table sold at the door (zone price).
+// One form: guests, where, price, payment (paid now records the money so cash-up sees it); wristband given at once.
+const walkinPrice = () => S.layouts.find((l) => l.id === nightLayoutId())?.walkin_price ?? null;
+function walkInForm(opts = {}) {
+  const lid = nightLayoutId();
+  const busy = (x) => T.conflictsFor({ table_id: x.id, start_at: new Date().toISOString(), duration_min: 15 }, S.bookings, TOPTS()).length > 0;
+  const free = tablesOf(lid).filter((x) => !busy(x) || x.id === opts.tableId);
+  const where = opts.tableId ?? '';
+  const price = walkinPrice();
+  return `<h2>${t('walkin_title')}</h2>
+    <form data-form="walkin" class="stack bk-form">
+      <fieldset class="blk">
+        <legend>${t('sec_where')}</legend>
+        <select name="table_id" data-change="walkin-where" aria-label="${t('sec_where')}">
+          <option value="" ${where ? '' : 'selected'}>${t('standing_option')}</option>
+          ${free.map((x) => `<option value="${x.id}" ${x.id === where ? 'selected' : ''}>${esc(x.label)} · ${t('floor')} ${x.floor} · ${x.seats} ${t('seats_short')}${x.price != null ? ' · ' + baht(x.price) : ''}</option>`).join('')}
+        </select>
+      </fieldset>
+      <fieldset class="blk">
+        <legend>${t('sec_who')}</legend>
+        <div class="grid2">
+          <div class="stepper-field"><span class="field-label">${t('guests')}</span>
+            <div class="stepper">
+              <button type="button" class="icon step" data-action="step" data-d="-1" aria-label="${t('decrease')}">${ICON.minus}</button>
+              <input name="party_size" type="number" inputmode="numeric" min="1" max="200" value="${opts.party ?? 1}" required aria-label="${t('guests')}" data-input="walkin-calc">
+              <button type="button" class="icon step" data-action="step" data-d="1" aria-label="${t('increase')}">${ICON.plusB}</button>
+            </div>
+          </div>
+          <label class="walkin-price" ${where ? 'hidden' : ''}>${t('walkin_price_pp')}<input name="price" type="number" inputmode="numeric" min="0" step="10" value="${price ?? ''}" placeholder="700" data-input="walkin-calc"></label>
+          <label>${t('name')} <span class="muted small-text">(${t('optional')})</span><input name="guest_name" maxlength="80" autocomplete="off"></label>
+          <label>${t('phone')} <span class="muted small-text">(${t('optional')})</span><input name="phone" type="tel" inputmode="tel" maxlength="30" autocomplete="off"></label>
+        </div>
+        <div class="walkin-total" id="walkin-total"></div>
+      </fieldset>
+      <fieldset class="blk">
+        <legend>${t('pay_status')}</legend>
+        <div class="chip-radios pay-radios" role="radiogroup">${['paid', 'at_venue', 'waiting', 'unpaid'].map((st) =>
+          `<label class="chip-radio ps-${st}"><input type="radio" name="pay_status" value="${st}" ${st === 'paid' ? 'checked' : ''} data-change="walkin-pay"><span>${PAY_ICON[st]}${t('ps_' + st)}</span></label>`).join('')}</div>
+        <label class="walkin-method">${t('method')}<select name="method">
+          <option value="cash">${t('m_cash')}</option><option value="transfer">${t('m_transfer')}</option><option value="card">${t('m_card')}</option>
+        </select></label>
+      </fieldset>
+      <label class="check wb-check-row"><input type="checkbox" name="wristband" checked> ${t('wb_give_now')}</label>
+      <button class="primary big" type="submit">${ICON.check} ${t('walkin_save')}</button>
+    </form>`;
+}
+function walkInTotal(form) {
+  const party = Number(form.party_size.value) || 0;
+  const tb = tableById(form.table_id.value);
+  const total = tb ? (tb.price ?? 0) : party * (Number(form.price.value) || 0);
+  return { party, tb, total };
+}
+function updateWalkInTotal(form) {
+  const { total, tb } = walkInTotal(form);
+  const el = $('#walkin-total');
+  if (el) el.innerHTML = `${t('to_pay')} <b>${baht(total)}</b>${tb ? ` <span class="muted small-text">(${t('table')} ${esc(tb.label)})</span>` : ''}`;
+}
+async function saveWalkIn(form) {
+  const v = Object.fromEntries(new FormData(form));
+  const { party, tb, total } = walkInTotal(form);
+  if (!tb && !(Number(v.price) >= 0 && v.price !== '')) return toast(t('err_walkin_price'), true);
+  const start_at = new Date().toISOString();
+  const row = {
+    table_id: tb?.id ?? null, start_at, duration_min: T.minutesToClose(S.night, start_at, S.settings),
+    party_size: party, guest_name: v.guest_name.trim(), phone: v.phone.trim(), note: '', extra_table_ids: [],
+    is_walk_in: true, status: 'seated', pay_status: v.pay_status,
+    sold_price: tb ? null : total,
+    wristband_at: v.wristband ? start_at : null,
+  };
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true;
+  try {
+    const b = await run(sb.from('bookings').insert(row).select().single(), 'walkin.insert');
+    if (v.pay_status === 'paid' && total > 0) {
+      await run(sb.from('booking_payments').insert({ booking_id: b.id, amount: total, method: v.method }), 'walkin.payment');
+    }
+    log.info('walkin.created', { standing: !tb, party, total, pay: v.pay_status });
+    closeModal();
+    toast(`${t('walkin_saved')}: ${tb ? tb.label : t('standing')} · ${party} ${t('people')}`);
+    await loadNight(); render();
+  } catch (e) { btn.disabled = false; toast(errMsg(e), true); }
+}
+
 // ───────── Door mode (concert check-in) ─────────
 // Search a name, phone or table; one tap seats the guests and gives the wristband.
 const doorRows = () => {
@@ -814,6 +903,7 @@ function viewDoor() {
       ${concert ? `<span class="chip"><b>${wb}/${live.length}</b> ${t('wristband')}</span>` : ''}
       ${live.filter(owes).length ? `<span class="chip unpaid"><b>${live.filter(owes).length}</b> ${t('f_unpaid')}</span>` : ''}
     </div>
+    ${concert ? `<button class="primary big" data-action="walkin-new">${ICON.walk} ${t('walkin_concert')}</button>` : ''}
     <input class="search door-search" type="search" placeholder="${t('door_search')}" value="${esc(S.doorQ ?? '')}" data-input="door-q" aria-label="${t('door_search')}" enterkeyhint="search">
     <div class="filters">${['coming', 'seated', 'all'].map((k) => `<button class="fchip ${f === k ? 'on' : ''}" data-action="door-filter" data-f="${k}" aria-pressed="${f === k}">${t('door_f_' + k)}</button>`).join('')}</div>
     <div id="door-rows" class="door-rows">${doorList()}</div>
@@ -900,6 +990,8 @@ function viewLayouts() {
     <details class="blk fold zones" data-fold="zones" ${S.edit.zonesOpen ? 'open' : ''}>
       <summary>${ICON.ticket} ${t('zones')} ${zones.length ? `<span class="muted small-text">(${zones.length})</span>` : ''} ${ICON.chev}</summary>
       <p class="muted small-text">${t('zones_help')}</p>
+      <label class="inline-label walkin-row">${ICON.walk} ${t('walkin_price_pp')}
+        <input type="number" inputmode="numeric" min="0" step="10" value="${S.edit.walkin_price ?? ''}" placeholder="—" data-change="edit-walkin-price"></label>
       ${assigning ? `<div class="assign-banner" role="status"><i class="zdot" style="background:${esc(assigning.color)}"></i>
         <span class="grow">${t('zone_assign_hint').replace('{z}', esc(zoneLabel(assigning)))}</span>
         <button class="primary small" data-action="zone-assign-done">${t('done')}</button></div>` : ''}
@@ -1279,8 +1371,12 @@ function viewConcert() {
   return `<section class="concert">
     <div class="row between wrap toolbar">
       <h2 class="concert-title">${esc(concertTitle())}</h2>
-      <button class="primary" data-action="excel">${ICON.download} ${t('download_excel')}</button>
+      <div class="row">
+        <button data-action="walkin-new">${ICON.walk} ${t('walkin_concert')}</button>
+        <button class="primary" data-action="excel">${ICON.download} ${t('download_excel')}</button>
+      </div>
     </div>
+    ${walkinPrice() != null ? `<p class="muted small-text">${t('walkin_price_pp')}: ${baht(walkinPrice())}</p>` : ''}
     <div class="stats-row">
       <span class="chip"><b>${totals.bookings}</b> ${t('bookings_word')}</span>
       <span class="chip"><b>${totals.people}</b> ${t('people')}</span>
@@ -1295,8 +1391,8 @@ function viewConcert() {
         <tbody>${rows.map((r) => `<tr>
           <td class="c">${r.no}</td>
           <td><button class="linkish" data-action="open-booking" data-id="${r.booking.id}">${esc(r.name)}</button> <span class="muted">${esc(r.phone)}</span></td>
-          <td class="c"><b>${esc(r.tables)}</b></td>
-          <td class="c">${t('floor_' + r.floor) || r.floor}</td>
+          <td class="c"><b>${r.standing ? t('standing') : esc(r.tables)}</b></td>
+          <td class="c">${r.standing ? t('no_table') : t('floor_' + r.floor) || r.floor}</td>
           <td class="c">${r.party}</td>
           <td class="n">${r.listPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
           <td class="n">${r.netPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
@@ -1421,7 +1517,8 @@ function bookingForm(b, opts = {}) {
   if (time && !times.includes(time)) times.unshift(time);
   const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, time, S.settings)).toISOString(), duration_min: S.settings.default_duration_min, id: b?.id };
   const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings, TOPTS()).length > 0;
-  const tableId = b?.table_id ?? opts.tableId ?? (wide() && tableById(S.selTable)?.layout_id === lid ? S.selTable : null)
+  const standing = b && !b.table_id;
+  const tableId = standing ? '' : b?.table_id ?? opts.tableId ?? (wide() && tableById(S.selTable)?.layout_id === lid ? S.selTable : null)
     ?? (tables.find((x) => x.floor === S.floor && !busy(x)) ?? tables.find((x) => !busy(x)) ?? tables[0])?.id;
   if (!tables.length) return `<p class="empty">${t('no_tables')}</p>`;
   const priced = isConcertLayout(lid);
@@ -1459,7 +1556,7 @@ function bookingForm(b, opts = {}) {
       </fieldset>
       <fieldset class="blk">
         <legend>${t('sec_where')}</legend>
-        <label>${t('table')}<select name="table_id">${tableOptions(tables, tableId, busy)}</select></label>
+        <label>${t('table')}<select name="table_id">${standing ? `<option value="" selected>${t('standing_option')}</option>` : ''}${tableOptions(tables, tableId, busy)}</select></label>
         <details class="extra-tables" ${b?.extra_table_ids?.length ? 'open' : ''}>
           <summary>${ICON.plus} ${t('combine_tables')}${b?.extra_table_ids?.length ? ` (${b.extra_table_ids.length})` : ''}</summary>
           <div class="check-grid">${tables.map((x) => `<label class="check"><input type="checkbox" name="extra" value="${x.id}" ${b?.extra_table_ids?.includes(x.id) ? 'checked' : ''}>
@@ -1488,7 +1585,7 @@ async function saveBooking(form, confirmed) {
   const start_at = new Date(startMs).toISOString();
   const draft = {
     id: f.id || undefined,
-    table_id: f.table_id,
+    table_id: f.table_id || null,
     start_at,
     // Whole-night mode: the booking holds the table until closing.
     duration_min: wholeNight() ? T.minutesToClose(S.night, start_at, S.settings) : Number(f.duration_min),
@@ -1540,14 +1637,13 @@ async function openBooking(id) {
   if (!b) return;
   openBookingId = id;
   const late = isTonight() && T.isLate(b, Date.now());
-  const tb = tableById(b.table_id);
   const timeText = wholeNight() ? hhmm(b.start_at) : `${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}`;
   openModal(`<div data-booking="${b.id}" class="bk-detail">
     <header class="bk-head">
       <div class="bk-table" aria-label="${t('table')}">${esc(tablesLabel(b))}</div>
       <div class="grow">
         <h2>${esc(b.guest_name || t('walk_in'))}</h2>
-        <div class="bk-meta">${fmtNight(b.night)} · ${timeText} · ${ICON.person} ${b.party_size} · ${t('floor')} ${tb?.floor ?? ''} ${catChip(b)}
+        <div class="bk-meta">${fmtNight(b.night)} · ${timeText} · ${ICON.person} ${b.party_size} · ${floorText(b)} ${catChip(b)}
           ${late ? `<span class="pill st-late">${t('late')}</span>` : ''}</div>
       </div>
     </header>
@@ -1957,8 +2053,8 @@ async function applyNightLayout(layoutId, mapping) {
 
 // ───────── Events ─────────
 const actions = {
-  async lang() { setLang(getLang() === 'th' ? 'en' : 'th'); document.documentElement.lang = getLang(); closeModal(); render(); },
-  async logout() { if (!confirmLeaveEdit()) return; closeModal(); await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
+  async lang() { setLang(getLang() === 'th' ? 'en' : 'th'); $('#app').innerHTML = ''; document.documentElement.lang = getLang(); closeModal(); render(); },
+  async logout() { if (!confirmLeaveEdit()) return; closeModal(); clearTimeout(reloadTimer); await sb.auth.signOut(); S.user = null; S.night = null; boot(); },
   view(el) { if (S.view === 'layouts' && el.dataset.v !== 'layouts' && !confirmLeaveEdit()) return; closeModal(); S.view = el.dataset.v; S.selTable = null; render(); window.scrollTo(0, 0); },
   floor(el) { S.floor = Number(el.dataset.f); render(); },
   'edit-floor'(el) { S.editFloor = Number(el.dataset.f); S.selTable = null; render(); },
@@ -2022,6 +2118,7 @@ const actions = {
   step(el) {
     const input = el.closest('.stepper').querySelector('input');
     input.value = Math.min(Number(input.max) || 200, Math.max(Number(input.min) || 1, (Number(input.value) || 0) + Number(el.dataset.d)));
+    if (input.form?.dataset.form === 'walkin') updateWalkInTotal(input.form);
   },
   noop() {},
   async checkin(el) {
@@ -2116,7 +2213,11 @@ const actions = {
   unselect() { S.selTable = null; render(); },
   'select-table'(el) { S.selTable = el.dataset.id; S.floor = tableById(el.dataset.id)?.floor ?? S.floor; render(); },
   'new-booking'(el) { openModal(bookingForm(null, { tableId: el.dataset.table })); },
-  'walk-in'(el) { openModal(bookingForm(null, { walkIn: true, tableId: el.dataset.table })); },
+  'walk-in'(el) {
+    if (isConcertLayout(nightLayoutId())) { openModal(walkInForm({ tableId: el.dataset.table })); updateWalkInTotal($('form[data-form=walkin]')); }
+    else openModal(bookingForm(null, { walkIn: true, tableId: el.dataset.table }));
+  },
+  'walkin-new'() { openModal(walkInForm()); updateWalkInTotal($('form[data-form=walkin]')); },
   'open-booking'(el) { openBooking(el.dataset.id); },
   'edit-booking'(el) { openModal(bookingForm(S.bookings.find((b) => b.id === el.dataset.id))); },
   'confirm-save'() { saveBooking($('form[data-form="booking"]'), true); },
@@ -2218,6 +2319,8 @@ const changes = {
     const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings, TOPTS()).length > 0;
     sel.innerHTML = tableOptions(tablesOf(nightLayoutId()), sel.value, busy);
   },
+  'walkin-where'(el) { el.form.querySelector('.walkin-price').hidden = !!el.value; updateWalkInTotal(el.form); },
+  'walkin-pay'(el) { el.form.querySelector('.walkin-method').hidden = el.value !== 'paid'; },
   mode(el) { const d = el.form.querySelector('.duration-field'); if (d) d.hidden = el.value !== 'timed'; },
   'slip-pick'(el) { const f = el.files?.[0]; const n = $('#slip-name'); if (n) n.textContent = f ? f.name.slice(0, 24) : t('attach_slip'); },
   'product-pick'(el) {
@@ -2225,6 +2328,7 @@ const changes = {
     const b = S.bookings.find((x) => x.id === el.form.booking_id.value);
     el.form.qty.value = per && b ? b.party_size : 1;
   },
+  'edit-walkin-price'(el) { change(() => { S.edit.walkin_price = el.value === '' ? null : Math.round(Number(el.value)); S.edit.zonesOpen = true; }); },
   'pick-edit-layout'(el) { if (!confirmLeaveEdit()) { el.value = S.editLayoutId; return; } S.editLayoutId = el.value; S.selTable = null; render(); },
   async 'staff-role'(el) {
     try { await run(sb.from('profiles').update({ role: el.value }).eq('id', el.dataset.id)); await reload(); toast(t('saved')); }
@@ -2255,6 +2359,7 @@ async function lookupGuest(input) {
 
 document.addEventListener('input', (e) => {
   if (e.target.dataset.input === 'q') { S.q = e.target.value; $('#list-rows').innerHTML = listRows(); return; }
+  if (e.target.dataset.input === 'walkin-calc') { updateWalkInTotal(e.target.form); return; }
   if (e.target.dataset.input === 'door-q') { S.doorQ = e.target.value; $('#door-rows').innerHTML = doorList(); return; }
   if (e.target.dataset.input === 'drawer') {
     const exp = Number(e.target.dataset.expect), v = e.target.value === '' ? null : Number(e.target.value);
@@ -2312,6 +2417,7 @@ const forms = {
   },
   booking(f) { return saveBooking(f, false); },
   'layout-create'(f) { return createLayout(f); },
+  walkin(f) { return saveWalkIn(f); },
   zone(f) { saveZone(f); },
   bulk(f) { bulkAdd(f); },
   table(f) {

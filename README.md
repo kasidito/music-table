@@ -25,6 +25,7 @@ Staff-only table booking app for the bar. Web app (phone/tablet browser) + Supab
 - **Booking length** (Settings): *whole night* (default) — a booking holds its table until closing; or *fixed length* for venues that turn tables.
 - **Concert report** (More → รีพอร์ตคอนเสิร์ต, or the button on a concert night's map): the bar's sheet layout, wristband ticks, Excel download (opens in Google Sheets).
 - Set drinks per table (เครื่องดื่มในเซ็ต): set on the price zone (แก้ผัง → แก้ไขผัง → โซนราคา).
+- **Concert walk-ins** (+ Walk-in on the door page or concert report, or tap a free table): standing (no table, price per person set per concert layout in แก้ผัง → โซนราคา) or a free table at its zone price. Paid now records the money for cash-up; wristband given at once.
 - **Door check-in** (concert night map → เช็กอินหน้าประตู, or More): search name/phone/table, one tap seats the guests and gives the wristband; unpaid guests ask for a confirm.
 - **Cash-up** (สรุปรายคืน → ปิดยอดคืนนี้): money by method and by staff, marked-paid-but-unrecorded, still to collect, drawer count (not saved), share summary to LINE.
 - **Managers can undo a guest status** (e.g. wrong ไม่มา) from the booking sheet; staff cannot. Every change stays in history.

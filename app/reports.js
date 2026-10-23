@@ -53,12 +53,14 @@ export function concertRows(bookings, tableById, categoryById = () => null) {
     const items = (b.booking_items ?? []).map((i) => `${i.name} ×${i.qty}`);
     return {
       booking: b,
-      name: b.guest_name || '',
+      name: b.guest_name || (b.is_walk_in ? 'Walk-in' : ''),
       phone: b.phone || '',
       tables: tbs.map((x) => x.label).join('+'),
-      floor: Math.min(...tbs.map((x) => x.floor)),
+      standing: !tbs.length,
+      floor: tbs.length ? Math.min(...tbs.map((x) => x.floor)) : null,
       party: b.party_size,
-      listPrice: listPriceOf(b, tableById),
+      // Standing walk-in: the ticket price is both the price and what was sold.
+      listPrice: tbs.length ? listPriceOf(b, tableById) : (b.sold_price ?? 0),
       netPrice: netPriceOf(b, tableById, cat),
       setDrinks: [...tbs.map((x) => x.set_note).filter(Boolean), ...items].join(' + '),
       note: b.note || '',
