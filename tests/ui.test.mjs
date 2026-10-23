@@ -298,7 +298,8 @@ try {
   assert.ok(await page.locator('[data-action=table-add]').count() === 0, 'no add buttons outside edit mode');
 
   await page.click('[data-action=edit-start]');
-  await page.click('[data-action=table-add]');
+  await page.click('[data-action=add-open]');
+  await page.click('#modal [data-action=table-add]');
   await page.waitForSelector('form[data-form=table]');
   assert.equal((await db()).tables.length, JSON.parse(before).length, 'nothing saved before Save');
   const newId = await page.getAttribute('#editor-svg .tbl.sel', 'data-tid');
@@ -318,8 +319,10 @@ try {
   assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'T4', 'undo restores previous name');
   await page.click('[data-action=redo]');
   assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'Bar 1', 'redo re-applies');
-  await page.selectOption('[data-change=add-element]', 'speaker');
+  await page.click('[data-action=add-open]');
+  await page.click('#modal [data-action=add-fx][data-k=speaker]');
   await page.waitForSelector('#editor-svg .fx-speaker');
+  await page.click('details[data-fold=room] summary');
   await page.fill('form[data-form=room] [name=w]', '900');
   await page.click('form[data-form=room] button[type=submit]');
   await shot('08-layout-editor');
@@ -357,7 +360,7 @@ try {
 
   // Remove a table from Concert, then switch tonight to Concert -> mapping dialog
   const cT2 = d.tables.find((x) => x.layout_id === concert.id && x.label === 'T2');
-  await page.click(`[data-action=pick-edit-layout][data-id="${concert.id}"]`);
+  await page.selectOption('[data-change=pick-edit-layout]', concert.id);
   await page.click('[data-action=edit-start]');
   await page.click(`#editor-svg [data-tid="${cT2.id}"]`);
   await page.click('[data-action=table-remove]');
@@ -390,7 +393,8 @@ try {
   assert.ok(await page.locator('#modal [name=type][value=concert]').isChecked(), 'concert is the default type');
   await page.click('#modal button[type=submit]');
   await page.waitForSelector('details[data-fold=zones][open]');
-  await page.click('[data-action=bulk-open]');
+  await page.click('[data-action=add-open]');
+  await page.click('#modal [data-action=bulk-open]');
   await page.fill('#modal [name=prefix]', 'G');
   await page.fill('#modal [name=count]', '4');
   await page.click('#modal button[type=submit]');
@@ -412,7 +416,8 @@ try {
   const gl = d.layouts.find((l) => l.name === 'Greasy test');
   const gt = d.tables.filter((x) => x.layout_id === gl.id).sort((a, b) => a.label.localeCompare(b.label));
   assert.deepEqual(gt.map((x) => [x.label, x.price ?? null, x.set_note ?? null]), [['G1', 4200, 'Monkey 1 ขวด'], ['G2', 4200, 'Monkey 1 ขวด'], ['G3', null, null], ['G4', null, null]]);
-  assert.match(await page.textContent(`[data-action=pick-edit-layout][data-id="${gl.id}"]`), /คอนเสิร์ต/, 'badge shows concert');
+  assert.match(await page.textContent(`[data-change=pick-edit-layout] option[value="${gl.id}"]`), /คอนเสิร์ต/, 'dropdown shows concert');
+  assert.match(await page.textContent('.lay-meta'), /คอนเสิร์ต/);
   step('concert layout: create blank, bulk add, price zone, pick tables, save');
 
   // Staff and settings

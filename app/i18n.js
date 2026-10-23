@@ -1,5 +1,6 @@
 const DICT = {
   th: {
+    zones_count: "{n} โซนราคา",
     layouts_title: "ผังทั้งหมด",
     create_layout: "สร้างผังใหม่",
     layout_name: "ชื่อผัง",
@@ -263,6 +264,7 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    zones_count: "{n} price zones",
     layouts_title: "All layouts",
     create_layout: "New layout",
     layout_name: "Layout name",

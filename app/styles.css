@@ -238,10 +238,12 @@ svg.editor.editing { touch-action: none; }
 .room-handle circle { fill: var(--accent); stroke: var(--bg); stroke-width: 3; }
 .room-handle path { stroke: var(--accent-text); stroke-width: 2; }
 .editbar {
-  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
-  background: var(--raised); border: 1px solid var(--accent); border-radius: 14px; padding: 8px; margin-bottom: 10px;
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--raised); border: 1px solid var(--accent); border-radius: 14px; padding: 6px; margin-bottom: 10px; flex-wrap: nowrap;
 }
-.edit-title { font-weight: 600; font-size: 14px; }
+.editbar .icon-btn { width: 44px; padding: 0; flex: none; }
+.edit-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; font-weight: 700; font-size: 15px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.edit-title small { font-weight: 500; font-size: 11px; color: var(--muted); }
 .dirty { font-style: normal; font-size: 12px; color: var(--accent); }
 .icon-btn { min-height: 44px; padding: 0 10px; background: transparent; }
 .icon-btn:disabled, button:disabled { opacity: .4; cursor: default; }
@@ -580,12 +582,17 @@ details.fold[open] > summary { margin-bottom: 10px; }
 }
 
 /* ── Layouts page ── */
-.layout-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-bottom: 12px; }
-.layout-card { justify-content: flex-start; gap: 12px; min-height: 64px; padding: 10px 12px; text-align: left; background: var(--surface); }
-.layout-card .grow { display: flex; flex-direction: column; line-height: 1.25; }
-.layout-card small { color: var(--muted); font-weight: 400; }
-.layout-card.on { border-color: var(--accent); background: rgba(243, 150, 70, .12); }
-.badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.lay-head { display: flex; align-items: flex-end; gap: 8px; }
+.lay-select { flex: 1; min-width: 0; }
+.lay-select .field-label { margin: 0; }
+.lay-select select { font-weight: 600; font-size: 1.05rem; }
+.more-btn { width: 48px; min-height: 48px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; }
+.lay-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 12px; }
+.lay-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.lay-actions button { min-height: 48px; }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+.fx-btn { min-height: 48px; background: var(--surface2); }
+.menu-item.danger { color: var(--danger); }
 .badge-s { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
 .badge-s.concert { border-color: var(--accent); color: var(--accent); }
 .zones .zone-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
