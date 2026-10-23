@@ -67,8 +67,7 @@ begin
   perform set_config('app.recompute', '', true);
 end $$;
 
-drop trigger bookings_tables_changed on public.bookings;
-create trigger bookings_tables_changed after update of table_id, extra_table_ids, category_id, sold_price on public.bookings
+create or replace trigger bookings_tables_changed after update of table_id, extra_table_ids, category_id, sold_price on public.bookings
   for each row execute function public.bookings_tables_changed();
 
 -- ───────── Bookings validation: pay_status drives paid; wristband stamped by the server ─────────
