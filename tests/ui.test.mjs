@@ -303,6 +303,7 @@ try {
   assert.equal((await db()).tables.length, JSON.parse(before).length, 'nothing saved before Save');
   const newId = await page.getAttribute('#editor-svg .tbl.sel', 'data-tid');
   assert.match(newId, /^new-/);
+  await page.locator(`#editor-svg [data-tid="${newId}"]`).scrollIntoViewIfNeeded();
   const box = await page.locator(`#editor-svg [data-tid="${newId}"]`).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -311,7 +312,6 @@ try {
   await page.fill('form[data-form=table] [name=label]', 'Bar 1');
   await page.fill('form[data-form=table] [name=seats]', '6');
   await page.selectOption('form[data-form=table] [name=shape]', 'round');
-  await page.fill('form[data-form=table] [name=set_note]', 'Monkey 1 ขวด');
   await page.click('form[data-form=table] button[type=submit]');
   assert.equal(await page.inputValue('form[data-form=table] [name=label]'), 'Bar 1');
   await page.click('[data-action=undo]');
@@ -327,7 +327,7 @@ try {
   await page.waitForSelector('[data-action=edit-start]');
   d = await db();
   const bar1 = d.tables.find((x) => x.label === 'Bar 1');
-  assert.ok(bar1 && bar1.seats === 6 && bar1.shape === 'round' && bar1.set_note === 'Monkey 1 ขวด', 'saved new table with set drinks');
+  assert.ok(bar1 && bar1.seats === 6 && bar1.shape === 'round', 'saved new table');
   assert.equal(bar1.x, 32, 'dragged past the wall -> sits flush against it');
   assert.equal(d.tables.filter((x) => x.kind === 'speaker').length, 1, 'saved speaker');
   assert.equal(d.layouts.find((l) => l.id === 'L1').rooms['1'].w, 900, 'room size saved');
@@ -335,6 +335,7 @@ try {
 
   // Cancel discards the draft
   await page.click('[data-action=edit-start]');
+  await page.locator('#editor-svg [data-tid="T2"]').scrollIntoViewIfNeeded();
   const t2box = await page.locator('#editor-svg [data-tid="T2"]').boundingBox();
   await page.mouse.move(t2box.x + 10, t2box.y + 10); await page.mouse.down();
   await page.mouse.move(t2box.x + 90, t2box.y + 90, { steps: 4 }); await page.mouse.up();
@@ -342,16 +343,21 @@ try {
   assert.equal((await db()).tables.find((x) => x.id === 'T2').x, 400, 'cancel keeps saved position');
   step('cancel discards unsaved moves');
 
-  promptAnswer = 'Concert';
-  await page.click('[data-action=layout-dup]');
-  await page.waitForTimeout(100);
+  // New layout: copy of Normal
+  await page.click('[data-action=layout-create]');
+  await page.fill('#modal [name=name]', 'Concert');
+  await page.click('#modal .radio-card:has-text("ผังปกติ")');
+  await page.selectOption('#modal [name=source]', 'L1');
+  await page.click('#modal button[type=submit]');
+  await page.waitForSelector('.editbar');
+  await page.click('[data-action=edit-cancel]');
   d = await db();
   const concert = d.layouts.find((l) => l.name === 'Concert');
   assert.equal(d.tables.filter((x) => x.layout_id === concert.id).length, 6, 'all tables and elements copied');
 
   // Remove a table from Concert, then switch tonight to Concert -> mapping dialog
   const cT2 = d.tables.find((x) => x.layout_id === concert.id && x.label === 'T2');
-  await page.selectOption('[data-change=edit-layout]', concert.id);
+  await page.click(`[data-action=pick-edit-layout][data-id="${concert.id}"]`);
   await page.click('[data-action=edit-start]');
   await page.click(`#editor-svg [data-tid="${cT2.id}"]`);
   await page.click('[data-action=table-remove]');
@@ -376,6 +382,38 @@ try {
     assert.equal(d.tables.find((x) => x.id === b.table_id).layout_id, concert.id);
   }
   step('switch night to Concert with booking mapping');
+
+  // Concert layout from scratch: blank, add 4 tables at once, a price zone, pick 2 tables, save
+  await go('layouts');
+  await page.click('[data-action=layout-create]');
+  await page.fill('#modal [name=name]', 'Greasy test');
+  assert.ok(await page.locator('#modal [name=type][value=concert]').isChecked(), 'concert is the default type');
+  await page.click('#modal button[type=submit]');
+  await page.waitForSelector('details[data-fold=zones][open]');
+  await page.click('[data-action=bulk-open]');
+  await page.fill('#modal [name=prefix]', 'G');
+  await page.fill('#modal [name=count]', '4');
+  await page.click('#modal button[type=submit]');
+  assert.equal(await page.locator('#editor-svg .tbl:not(.fx)').count(), 4, 'four tables added');
+  await page.click('[data-action=zone-new]');
+  await page.click('#modal .chip-radio:has-text("เขียว")');
+  await page.fill('#modal [name=price]', '4200');
+  await page.fill('#modal [name=set_note]', 'Monkey 1 ขวด');
+  await page.click('#modal button[type=submit]');
+  await page.waitForSelector('.assign-banner');
+  for (const n of ['G1', 'G2']) await page.locator('#editor-svg .tbl', { hasText: n }).click();
+  assert.equal(await page.locator('#editor-svg .tbl.in-zone').count(), 2, 'two tables in the zone');
+  assert.match(await page.textContent('.zone-row'), /2 โต๊ะ/);
+  await page.click('[data-action=zone-assign-done]');
+  await shot('08b-concert-zones');
+  await page.click('[data-action=edit-save]');
+  await page.waitForSelector('[data-action=edit-start]');
+  d = await db();
+  const gl = d.layouts.find((l) => l.name === 'Greasy test');
+  const gt = d.tables.filter((x) => x.layout_id === gl.id).sort((a, b) => a.label.localeCompare(b.label));
+  assert.deepEqual(gt.map((x) => [x.label, x.price ?? null, x.set_note ?? null]), [['G1', 4200, 'Monkey 1 ขวด'], ['G2', 4200, 'Monkey 1 ขวด'], ['G3', null, null], ['G4', null, null]]);
+  assert.match(await page.textContent(`[data-action=pick-edit-layout][data-id="${gl.id}"]`), /คอนเสิร์ต/, 'badge shows concert');
+  step('concert layout: create blank, bulk add, price zone, pick tables, save');
 
   // Staff and settings
   await go('staff');

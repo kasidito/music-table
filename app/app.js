@@ -447,13 +447,13 @@ function startEdit() {
   for (const f of [1, 2]) {
     if (!S.edit.rooms[f]) {
       const items = S.edit.items.filter((x) => x.floor === f);
-      if (items.length) S.edit.rooms[f] = boundsOf(items);
+      S.edit.rooms[f] = items.length ? boundsOf(items) : { w: 800, h: 600 };
     }
   }
   S.edit.start = snapshot();
   render();
 }
-const snapshot = () => JSON.stringify({ items: S.edit.items, removed: S.edit.removed, rooms: S.edit.rooms });
+const snapshot = () => JSON.stringify({ items: S.edit.items, removed: S.edit.removed, rooms: S.edit.rooms, zones: S.edit.zones ?? [] });
 function restore(snap) { Object.assign(S.edit, JSON.parse(snap)); }
 const isDirty = () => !!S.edit && snapshot() !== S.edit.start;
 function change(fn) {
@@ -699,11 +699,37 @@ function viewSummary() {
   </section>`;
 }
 
+// ───────── Layouts page ─────────
+// Concert layout = a layout whose tables have price zones. Zones are colour + price + set drinks, applied to tables.
+const zoneKey = (x) => `${x.color ?? ''}|${x.price ?? ''}|${x.set_note ?? ''}`;
+function zonesOf(items) {
+  const m = new Map();
+  for (const x of items.filter(isTable)) {
+    if (x.price == null && !x.color) continue;
+    const k = zoneKey(x);
+    const z = m.get(k) ?? { color: x.color ?? '#ACC1C6', price: x.price, set_note: x.set_note ?? '', count: 0 };
+    z.count++; m.set(k, z);
+  }
+  for (const z of S.edit?.zones ?? []) if (!m.has(zoneKey(z))) m.set(zoneKey(z), { ...z, count: 0 });
+  return [...m.values()].sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
+}
+const zoneLabel = (z) => `${z.price != null ? baht(z.price) : '—'}${z.set_note ? ' · ' + z.set_note : ''}`;
+
+function layoutCard(l) {
+  const n = tablesOf(l.id).length;
+  const concert = isConcertLayout(l.id);
+  return `<button class="layout-card ${l.id === S.editLayoutId ? 'on' : ''}" data-action="pick-edit-layout" data-id="${l.id}" aria-pressed="${l.id === S.editLayoutId}">
+    ${concert ? ICON.ticket : ICON.map}
+    <span class="grow"><b>${esc(l.name)}</b><small>${t('tables_count').replace('{n}', n)}</small></span>
+    <span class="badges">${l.is_default ? `<span class="badge-s">${t('default')}</span>` : ''}<span class="badge-s ${concert ? 'concert' : ''}">${concert ? t('badge_concert') : t('badge_normal')}</span></span>
+  </button>`;
+}
+
 function viewLayouts() {
   if (S.edit && !S.layouts.some((l) => l.id === S.edit.layoutId)) S.edit = null;
   if (!S.editLayoutId) S.editLayoutId = nightLayoutId() ?? S.layouts[0]?.id;
   const lay = S.layouts.find((l) => l.id === S.editLayoutId);
-  if (!lay) return `<section><button class="primary" data-action="layout-new">${ICON.plus} ${t('layout_new')}</button></section>`;
+  if (!lay) return `<section><button class="primary big" data-action="layout-create">${ICON.plus} ${t('create_layout')}</button></section>`;
   const editing = S.edit?.layoutId === lay.id;
   const all = editing ? S.edit.items : itemsOf(lay.id);
   const items = all.filter((x) => x.floor === S.editFloor);
@@ -712,33 +738,38 @@ function viewLayouts() {
   const floorSeg = `<div class="seg">${[1, 2].map((f) =>
     `<button class="${S.editFloor === f ? 'on' : ''}" data-action="edit-floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>`;
   const handle = editing ? `<g class="room-handle" data-handle="room"><circle cx="${room.w}" cy="${room.h}" r="16"/><path d="M${room.w - 6} ${room.h + 2}l8-8M${room.w - 1} ${room.h + 6}l6-6"/></g>` : '';
-  const svg = `<svg id="editor-svg" class="floor editor ${editing ? 'editing' : ''}" viewBox="${viewBoxFor(items, room, editing ? 60 : 12)}">
+  const assigning = editing && S.edit.assign != null ? zonesOf(S.edit.items)[S.edit.assign] : null;
+  const svg = `<svg id="editor-svg" class="floor editor ${editing ? 'editing' : ''} ${assigning ? 'assigning' : ''}" viewBox="${viewBoxFor(items, room, editing ? 60 : 12)}">
     ${wallsSvg(room)}
-    ${items.map((tb) => tableSvg(tb, 'edit' + (editing && tb.id === S.selTable ? ' sel' : ''), [tb.label, isTable(tb) ? `${tb.seats} ${t('seats_short')}` : ''])).join('')}
+    ${items.map((tb) => tableSvg(tb, 'edit' + (editing && tb.id === S.selTable && !assigning ? ' sel' : '') + (assigning && isTable(tb) && zoneKey(tb) === zoneKey(assigning) ? ' in-zone' : ''),
+      [tb.label, isTable(tb) ? (tb.price != null ? baht(tb.price) : `${tb.seats} ${t('seats_short')}`) : ''])).join('')}
     ${handle}
   </svg>`;
 
   if (!editing) {
     return `<section>
-      <div class="row wrap toolbar">
-        <select data-change="edit-layout" class="grow">${S.layouts.map((l) =>
-          `<option value="${l.id}" ${l.id === lay.id ? 'selected' : ''}>${esc(l.name)}${l.is_default ? ' (' + t('default') + ')' : ''}</option>`).join('')}</select>
-        <button class="primary" data-action="edit-start">${ICON.edit} ${t('edit_layout')}</button>
+      <div class="row between toolbar">
+        <h2>${t('layouts_title')}</h2>
+        <button class="primary" data-action="layout-create">${ICON.plus} ${t('create_layout')}</button>
       </div>
-      <div class="row wrap toolbar">
-        ${floorSeg}
+      <div class="layout-cards">${S.layouts.map(layoutCard).join('')}</div>
+      <div class="blk">
+        <div class="row between wrap">
+          <h3>${esc(lay.name)}</h3>
+          <button class="primary" data-action="edit-start">${ICON.edit} ${t('edit_layout')}</button>
+        </div>
         <div class="row wrap">
-          <button class="ghost small" data-action="layout-new">${t('layout_new')}</button>
-          <button class="ghost small" data-action="layout-dup">${t('layout_dup')}</button>
           <button class="ghost small" data-action="layout-rename">${t('rename')}</button>
           ${lay.is_default ? '' : `<button class="ghost small" data-action="layout-default">${t('make_default')}</button>
             <button class="ghost small danger" data-action="layout-delete">${t('delete')}</button>`}
         </div>
       </div>
+      <div class="row wrap toolbar">${floorSeg}</div>
       <div class="floor-wrap">${svg}</div>
     </section>`;
   }
 
+  const zones = zonesOf(S.edit.items);
   return `<section>
     <div class="editbar">
       <div class="row">
@@ -755,12 +786,27 @@ function viewLayouts() {
       ${floorSeg}
       <div class="row wrap">
         <button class="primary small" data-action="table-add">${ICON.plus} ${t('table_add')}</button>
+        <button class="small" data-action="bulk-open">${ICON.plus} ${t('bulk_add')}</button>
         <select data-change="add-element" aria-label="${t('add_element')}">
           <option value="">+ ${t('add_element')}</option>
           ${Object.keys(FIXTURES).map((k) => `<option value="${k}">${t('fx_' + k)}</option>`).join('')}
         </select>
       </div>
     </div>
+    <details class="blk fold zones" data-fold="zones" ${S.edit.zonesOpen || zones.length ? 'open' : ''}>
+      <summary>${ICON.ticket} ${t('zones')} ${zones.length ? `<span class="muted small-text">(${zones.length})</span>` : ''} ${ICON.chev}</summary>
+      <p class="muted small-text">${t('zones_help')}</p>
+      ${assigning ? `<div class="assign-banner" role="status"><i class="zdot" style="background:${esc(assigning.color)}"></i>
+        <span class="grow">${t('zone_assign_hint').replace('{z}', esc(zoneLabel(assigning)))}</span>
+        <button class="primary small" data-action="zone-assign-done">${t('done')}</button></div>` : ''}
+      <div class="zone-list">${zones.map((z, i) => `<div class="zone-row ${S.edit.assign === i ? 'on' : ''}">
+        <i class="zdot" style="background:${esc(z.color)}"></i>
+        <span class="grow"><b>${z.price != null ? baht(z.price) : '—'}</b> <span class="muted small-text">${esc(z.set_note || '')}</span><br><span class="muted small-text">${t('tables_count').replace('{n}', z.count)}</span></span>
+        <button class="small" data-action="zone-assign" data-i="${i}">${t('zone_assign')}</button>
+        <button class="ghost small" data-action="zone-edit" data-i="${i}">${t('edit')}</button>
+      </div>`).join('') || `<p class="muted small-text">${t('no_zones')}</p>`}</div>
+      <button class="primary small" data-action="zone-new">${ICON.plus} ${t('zone_add')}</button>
+    </details>
     <form data-form="room" class="room-bar">
       <span class="muted small-text">${t('room_size')}</span>
       <label class="inline-label">${t('width')}<input name="w" type="number" min="100" max="3000" value="${Math.round(room.w)}"></label>
@@ -768,19 +814,17 @@ function viewLayouts() {
       <button class="ghost small" type="submit">${t('apply')}</button>
       <button class="ghost small" type="button" data-action="room-fit">${t('room_fit')}</button>
     </form>
-    <p class="muted small-text">${t('drag_hint_edit')}</p>
+    <p class="muted small-text">${assigning ? '' : t('drag_hint_edit')}</p>
     <div class="floor-wrap">${svg}</div>
-    ${sel ? `<form data-form="table" class="panel stack">
+    ${sel && !assigning ? `<form data-form="table" class="panel stack">
       <input type="hidden" name="id" value="${sel.id}">
       <div class="grid2">
         <label>${t('table_name')}<input name="label" value="${esc(sel.label)}" required maxlength="20"></label>
         ${isTable(sel) ? `<label>${t('seats')}<input name="seats" type="number" min="1" max="50" value="${sel.seats}" required></label>` : `<input type="hidden" name="seats" value="0">`}
-        ${isTable(sel) ? `<label>${t('tier_color')}<select name="color">
-          <option value="">${t('none')}</option>
-          ${TIER_COLORS.map(([c, k]) => `<option value="${c}" ${sel.color === c ? 'selected' : ''}>${t(k)}</option>`).join('')}
-        </select></label>
-        <label>${t('price')}<input name="price" type="number" min="0" step="100" inputmode="numeric" value="${sel.price ?? ''}" placeholder="—"></label>
-        <label>${t('set_drinks')}<input name="set_note" maxlength="80" value="${esc(sel.set_note ?? '')}" placeholder="Monkey 1 ขวด"></label>` : ''}
+        ${isTable(sel) ? `<label>${t('zone')}<select name="zone">
+          <option value="">${t('no_zone')}</option>
+          ${zones.map((z, i) => `<option value="${i}" ${zoneKey(sel) === zoneKey(z) ? 'selected' : ''}>${esc(zoneLabel(z))}</option>`).join('')}
+        </select></label>` : ''}
         <label>${t('width')}<input name="w" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).w}" required></label>
         <label>${t('height')}<input name="h" type="number" min="10" max="1000" step="1" value="${sizeOf(sel).h}" required></label>
         <label>${t('shape')}<select name="shape">
@@ -792,8 +836,129 @@ function viewLayouts() {
         <button class="primary" type="submit">${t('apply')}</button>
         <button class="ghost danger" type="button" data-action="table-remove" data-id="${sel.id}">${t('remove_table')}</button>
       </div>
-    </form>` : `<p class="muted small-text">${t('tap_to_edit')}</p>`}
+    </form>` : assigning ? '' : `<p class="muted small-text">${t('tap_to_edit')}</p>`}
   </section>`;
+}
+
+// New layout: name, type (normal / concert), blank or copied from another layout.
+function openCreateLayout() {
+  openModal(`<h2>${t('create_layout')}</h2>
+    <form data-form="layout-create" class="stack">
+      <label>${t('layout_name')}<input name="name" required maxlength="60" placeholder="${t('layout_name_ph')}"></label>
+      <fieldset class="mode-pick"><legend>${t('layout_type')}</legend>
+        ${['concert', 'normal'].map((k, i) => `<label class="radio-card"><input type="radio" name="type" value="${k}" ${i === 0 ? 'checked' : ''}>
+          <span><b>${t('type_' + k)}</b><small>${t('type_' + k + '_help')}</small></span></label>`).join('')}
+      </fieldset>
+      <label>${t('start_from')}<select name="source">
+        <option value="">${t('start_blank')}</option>
+        ${S.layouts.map((l) => `<option value="${l.id}">${t('start_copy')}: ${esc(l.name)}</option>`).join('')}
+      </select></label>
+      <button class="primary big" type="submit">${t('create')}</button>
+    </form>`);
+}
+async function createLayout(f) {
+  const v = Object.fromEntries(new FormData(f));
+  const name = v.name.trim();
+  if (!name) return;
+  try {
+    const id = v.source
+      ? await run(sb.rpc('duplicate_layout', { p_layout: v.source, p_name: name }), 'layout.duplicate')
+      : (await run(sb.from('layouts').insert({ name }).select().single(), 'layout.insert')).id;
+    log.info('layout.created', { type: v.type, copied: !!v.source });
+    closeModal();
+    S.editLayoutId = id; S.editFloor = 1; S.selTable = null;
+    await reload();
+    startEdit();
+    if (v.type === 'concert') { S.edit.zonesOpen = true; render(); }
+    toast(t('layout_created'));
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+// Zone form (new or edit): colour, price, set drinks. Editing applies to every table in the zone.
+function openZoneForm(i) {
+  const z = i != null ? zonesOf(S.edit.items)[i] : { color: TIER_COLORS[S.edit.items.length % TIER_COLORS.length][0], price: '', set_note: '' };
+  openModal(`<h2>${i != null ? t('zone_edit') : t('zone_new')}</h2>
+    <form data-form="zone" class="stack">
+      <input type="hidden" name="i" value="${i ?? ''}">
+      <div class="field-label">${t('tier_color')}</div>
+      <div class="chip-radios">${TIER_COLORS.map(([c, k]) => `<label class="chip-radio" style="--c:${c}"><input type="radio" name="color" value="${c}" ${z.color === c ? 'checked' : ''}><span><i class="zdot" style="background:${c}"></i>${t(k)}</span></label>`).join('')}</div>
+      <div class="grid2">
+        <label>${t('price')}<input name="price" type="number" min="0" step="100" inputmode="numeric" value="${z.price ?? ''}" required></label>
+        <label>${t('set_drinks')}<input name="set_note" maxlength="80" value="${esc(z.set_note ?? '')}" placeholder="Monkey 1 ขวด"></label>
+      </div>
+      <button class="primary big" type="submit">${i != null ? t('save') : t('zone_save_pick')}</button>
+      ${i != null ? `<button class="ghost danger" type="button" data-action="zone-remove" data-i="${i}">${t('zone_remove')}</button>` : ''}
+    </form>`);
+}
+const zoneFields = (z) => ({ color: z.color, price: z.price, set_note: z.set_note || null });
+function saveZone(f) {
+  const v = Object.fromEntries(new FormData(f));
+  const nz = { color: v.color, price: Math.round(Number(v.price)), set_note: v.set_note.trim() };
+  closeModal();
+  change(() => {
+    if (v.i !== '') {
+      const old = zonesOf(S.edit.items)[Number(v.i)];
+      for (const it of S.edit.items) if (isTable(it) && zoneKey(it) === zoneKey(old)) Object.assign(it, zoneFields(nz));
+      S.edit.zones = (S.edit.zones ?? []).filter((z) => zoneKey(z) !== zoneKey(old));
+    }
+    S.edit.zones = [...(S.edit.zones ?? []), nz];
+    S.edit.zonesOpen = true;
+    S.edit.assign = v.i !== '' ? null : zonesOf(S.edit.items).findIndex((z) => zoneKey(z) === zoneKey(nz));
+    S.selTable = null;
+  });
+}
+// Tap a table while choosing tables for a zone: in → out, out → in.
+function toggleZone(id) {
+  const z = zonesOf(S.edit.items)[S.edit.assign];
+  const it = draftItem(id);
+  if (!z || !it || !isTable(it)) return;
+  change(() => {
+    if (zoneKey(it) === zoneKey(z)) Object.assign(it, { color: null, price: null, set_note: null });
+    else Object.assign(it, zoneFields(z));
+    S.edit.assign = zonesOf(S.edit.items).findIndex((x) => zoneKey(x) === zoneKey(z));
+  });
+}
+
+// Add many tables at once (A1…A18), laid out in rows inside the room.
+function openBulkAdd() {
+  const zones = zonesOf(S.edit.items);
+  openModal(`<h2>${t('bulk_add')}</h2>
+    <form data-form="bulk" class="stack">
+      <div class="grid2">
+        <label>${t('prefix')}<input name="prefix" value="A" maxlength="6"></label>
+        <label>${t('start_no')}<input name="start" type="number" min="0" value="1" required></label>
+        <label>${t('count')}<input name="count" type="number" min="1" max="60" value="10" required></label>
+        <label>${t('seats')}<input name="seats" type="number" min="1" max="50" value="5" required></label>
+        <label>${t('shape')}<select name="shape"><option value="round">${t('round')}</option><option value="square">${t('square')}</option></select></label>
+        ${zones.length ? `<label>${t('zone')}<select name="zone"><option value="">${t('no_zone')}</option>${zones.map((z, i) => `<option value="${i}">${esc(zoneLabel(z))}</option>`).join('')}</select></label>` : ''}
+      </div>
+      <p class="muted small-text">${t('bulk_help')}</p>
+      <button class="primary big" type="submit">${t('add')}</button>
+    </form>`);
+}
+function bulkAdd(f) {
+  const v = Object.fromEntries(new FormData(f));
+  const floor = S.editFloor, n = Math.min(60, Math.max(1, Number(v.count)));
+  const room = S.edit.rooms[floor] ?? { w: 800, h: 600 };
+  const z = v.zone ? zonesOf(S.edit.items)[Number(v.zone)] : null;
+  const size = 64, gap = 24, perRow = Math.max(1, Math.floor((room.w - gap) / (size + gap)));
+  const taken = new Set(S.edit.items.map((x) => x.label));
+  closeModal();
+  change(() => {
+    if (!S.edit.rooms[floor]) S.edit.rooms[floor] = room;
+    for (let k = 0; k < n; k++) {
+      let num = Number(v.start) + k, label = `${v.prefix}${num}`;
+      while (taken.has(label)) label = `${v.prefix}${++num}_`;
+      taken.add(label);
+      S.edit.items.push({
+        id: `new-${++newSeq}`, layout_id: S.edit.layoutId, floor, kind: 'table', label, seats: Number(v.seats), shape: v.shape, w: size, h: size,
+        x: gap + size / 2 + (k % perRow) * (size + gap), y: gap + size / 2 + Math.floor(k / perRow) * (size + gap), archived: false,
+        color: null, price: null, set_note: null, ...(z ? zoneFields(z) : {}),
+      });
+    }
+    S.selTable = null;
+  });
+  log.info('layout.bulk_add', { n });
 }
 
 function viewStaff() {
@@ -1816,23 +1981,22 @@ const actions = {
       closeModal(); toast(t('saved')); await loadNight(); render();
     } catch (e) { toast(errMsg(e), true); }
   },
-  async 'layout-new'() {
-    const name = prompt(t('layout_name_prompt'));
-    if (!name?.trim()) return;
-    try {
-      const row = await run(sb.from('layouts').insert({ name: name.trim() }).select().single());
-      S.editLayoutId = row.id; await reload();
-    } catch (e) { toast(errMsg(e), true); }
+  'layout-create'() { openCreateLayout(); },
+  'pick-edit-layout'(el) { if (el.dataset.id === S.editLayoutId) return; if (!confirmLeaveEdit()) return; S.editLayoutId = el.dataset.id; S.selTable = null; render(); },
+  'zone-new'() { openZoneForm(null); },
+  'zone-edit'(el) { openZoneForm(Number(el.dataset.i)); },
+  'zone-assign'(el) { S.edit.assign = Number(el.dataset.i); S.edit.zonesOpen = true; S.selTable = null; render(); },
+  'zone-assign-done'() { S.edit.assign = null; render(); },
+  'zone-remove'(el) {
+    const z = zonesOf(S.edit.items)[Number(el.dataset.i)];
+    closeModal();
+    change(() => {
+      for (const it of S.edit.items) if (isTable(it) && zoneKey(it) === zoneKey(z)) Object.assign(it, { color: null, price: null, set_note: null });
+      S.edit.zones = (S.edit.zones ?? []).filter((x) => zoneKey(x) !== zoneKey(z));
+      S.edit.assign = null;
+    });
   },
-  async 'layout-dup'() {
-    const src = S.layouts.find((l) => l.id === S.editLayoutId);
-    const name = prompt(t('layout_name_prompt'), `${src.name} 2`);
-    if (!name?.trim()) return;
-    try {
-      S.editLayoutId = await run(sb.rpc('duplicate_layout', { p_layout: src.id, p_name: name.trim() }));
-      await reload();
-    } catch (e) { toast(errMsg(e), true); }
-  },
+  'bulk-open'() { openBulkAdd(); },
   async 'layout-rename'() {
     const src = S.layouts.find((l) => l.id === S.editLayoutId);
     const name = prompt(t('layout_name_prompt'), src.name);
@@ -1896,7 +2060,6 @@ const changes = {
     el.form.qty.value = per && b ? b.party_size : 1;
   },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
-  'edit-layout'(el) { if (!confirmLeaveEdit()) { el.value = S.editLayoutId; return; } S.editLayoutId = el.value; S.selTable = null; render(); },
   async 'staff-role'(el) {
     try { await run(sb.from('profiles').update({ role: el.value }).eq('id', el.dataset.id)); await reload(); toast(t('saved')); }
     catch (e) { toast(errMsg(e), true); await reload(); }
@@ -1972,13 +2135,16 @@ const forms = {
     if (error) { log.warn('auth.login_failed', { code: error.code ?? error.status, message: error.message }); toast(errMsg(error), true); }
   },
   booking(f) { return saveBooking(f, false); },
+  'layout-create'(f) { return createLayout(f); },
+  zone(f) { saveZone(f); },
+  bulk(f) { bulkAdd(f); },
   table(f) {
     const v = Object.fromEntries(new FormData(f));
     const it = draftItem(v.id);
     if (!it) return;
     change(() => {
       Object.assign(it, { label: v.label.trim(), seats: Number(v.seats), shape: v.shape, floor: Number(v.floor), w: Number(v.w), h: Number(v.h) });
-      if ('color' in v) Object.assign(it, { color: v.color || null, price: v.price === '' ? null : Number(v.price), set_note: v.set_note.trim() || null });
+      if ('zone' in v) Object.assign(it, v.zone === '' ? { color: null, price: null, set_note: null } : zoneFields(zonesOf(S.edit.items)[Number(v.zone)]));
       S.editFloor = it.floor;
     });
   },
@@ -2042,6 +2208,11 @@ document.addEventListener('pointerdown', (e) => {
   if (!S.edit) return;
   const svg = $('#editor-svg');
   if (!svg || !svg.contains(e.target)) return;
+  if (S.edit.assign != null) {
+    const g = e.target.closest('[data-tid]');
+    if (g) { e.preventDefault(); toggleZone(g.dataset.tid); }
+    return;
+  }
   if (e.target.closest('[data-handle=room]')) {
     drag = { room: true, before: snapshot(), moved: false };
   } else {
