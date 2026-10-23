@@ -46,19 +46,28 @@ export const isActive = (b) => b.status === 'booked' || b.status === 'seated';
 export const tablesOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])];
 const holds = (b, tableId) => b.table_id === tableId || (b.extra_table_ids ?? []).includes(tableId);
 
-export function conflictsFor(draft, bookings) {
+// wholeNight: a booking holds its table for the whole night, so any active booking on the same table clashes.
+export function conflictsFor(draft, bookings, { wholeNight = false } = {}) {
   const mine = tablesOf(draft);
   return bookings.filter((b) =>
     b.id !== draft.id && isActive(b) && tablesOf(b).some((id) => mine.includes(id)) &&
-    startMs(draft) < endMs(b) && startMs(b) < endMs(draft));
+    (wholeNight || (startMs(draft) < endMs(b) && startMs(b) < endMs(draft))));
+}
+
+// Whole-night mode: the booking lasts until closing time.
+export function minutesToClose(night, startIso, s) {
+  let close = nightTimeToMs(night, s.close_time.slice(0, 5), s);
+  if (close <= Date.parse(startIso)) close += 86400000;
+  return Math.max(15, Math.min(720, Math.round((close - Date.parse(startIso)) / 60000)));
 }
 
 // What a table looks like at a moment: seated holds the table until marked done.
-export function tableStateAt(tableId, bookings, ms) {
+// wholeNight: a booked table shows as booked all night, not only from its start time.
+export function tableStateAt(tableId, bookings, ms, { wholeNight = false } = {}) {
   const mine = bookings.filter((b) => holds(b, tableId) && isActive(b));
-  const seated = mine.find((b) => b.status === 'seated' && startMs(b) <= ms);
+  const seated = mine.find((b) => b.status === 'seated' && (wholeNight || startMs(b) <= ms));
   if (seated) return { state: 'seated', booking: seated };
-  const booked = mine.find((b) => b.status === 'booked' && startMs(b) <= ms && ms < endMs(b));
+  const booked = mine.find((b) => b.status === 'booked' && (wholeNight || (startMs(b) <= ms && ms < endMs(b))));
   if (booked) return { state: isLate(booked, ms) ? 'late' : 'booked', booking: booked };
   const next = mine.filter((b) => startMs(b) > ms).sort((a, b) => startMs(a) - startMs(b))[0];
   return { state: 'free', next };

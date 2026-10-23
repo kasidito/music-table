@@ -4,6 +4,7 @@ import { chromium } from '../tools/node_modules/playwright/index.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fontCss, serveFont } from './fonts.mjs';
 import assert from 'node:assert/strict';
 
 const ROOT = path.resolve(import.meta.dirname, '../app');
@@ -22,8 +23,9 @@ const bookings = [
 const fake = fs.readFileSync(path.resolve(import.meta.dirname, 'fake-supabase.js'), 'utf8') +
   `;window.__db.tables = ${JSON.stringify(rows)}; window.__db.bookings = ${JSON.stringify(bookings)};`;
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
+  if (serveFont(req, res)) return;
   const p = new URL(req.url, 'http://x').pathname;
   if (p === '/vendor/supabase.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(fake); }
   const file = path.join(ROOT, p === '/' ? 'index.html' : p);
@@ -41,7 +43,7 @@ try {
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
     await page.clock.setFixedTime(new Date('2026-10-22T22:00:00+07:00'));
-    await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+    await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: fontCss(`http://127.0.0.1:${server.address().port}`) }));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.fill('[name=email]', 'boss@bar.test');
     await page.fill('[name=password]', 'password123');
@@ -76,12 +78,10 @@ try {
     await page.waitForSelector('svg.floor [data-tid="P_T5"].st-seated');
     step(`${w}x${h}: one tap "arrived" seats guests and updates map`);
 
-    // Time slider redraws the map without re-rendering the page
-    const range = page.locator('#at-range');
-    await range.evaluate((el) => { el.value = '0'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    assert.equal(await page.textContent('#at-label'), '18:00');
-    assert.ok((await page.getAttribute('svg.floor [data-tid="P_S2"]', 'class')).includes('st-free'));
-    step(`${w}x${h}: time slider shows the floor at 18:00`);
+    // Whole-night mode: no time slider; a 22:30 booking already holds its table at 22:00
+    assert.equal(await page.locator('#at-range').count(), 0, 'no time slider');
+    assert.ok((await page.getAttribute('svg.floor [data-tid="P_S2"]', 'class')).includes('st-booked'));
+    step(`${w}x${h}: whole-night bookings hold the table all night`);
 
     // Date strip
     await page.click('.datestrip [data-d="2026-10-24"]');
@@ -91,7 +91,7 @@ try {
     // Floor 2 and every page through the rail
     await page.click('[data-action=floor][data-f="2"]');
     assert.ok(await page.locator('svg.floor [data-tid="P_UP3"]').count());
-    for (const v of ['list', 'summary', 'layouts', 'staff', 'settings', 'map']) {
+    for (const v of ['list', 'summary', 'concert', 'reports', 'layouts', 'staff', 'settings', 'map']) {
       await page.click(`.rail [data-v="${v}"]`);
       await page.waitForTimeout(80);
       assert.ok(await page.locator(`.rail [data-v="${v}"].on`).count(), v);

@@ -136,6 +136,8 @@ try {
   await page.click('[data-action=set-status][data-s=seated]');
   await page.waitForSelector('#modal', { state: 'hidden' });
   await page.click('.brow:has-text("สมชาย")');
+  assert.ok(await page.locator('#modal .steps li.now:has-text("มาแล้ว")').count(), 'status track shows Arrived');
+  await page.click('#modal details[data-fold=history] summary');
   await page.waitForSelector('#history .hrow');
   assert.equal(await page.locator('#history .hrow').count(), 2);
   assert.match(await page.textContent('#history'), /จองแล้ว → นั่งแล้ว/);
@@ -150,45 +152,63 @@ try {
   assert.equal(d.bookings.find((b) => b.guest_name === 'สมชาย').status, 'done');
   step('status changes and history with who/before/after');
 
-  // Payment: deposit with slip -> partial; rest in cash -> paid; history records it
-  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.unpaid').count(), 'priced booking shows unpaid');
+  // Payment: deposit with slip -> deposit; rest in cash -> paid; history records it
+  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.ps-unpaid').count(), 'priced booking shows unpaid');
   await page.click('.brow:has-text("สมชาย")');
-  await page.waitForSelector('#modal .pay-box.is-unpaid');
-  assert.match(await page.textContent('#modal .pay-box'), /3,300฿/);
+  await page.waitForSelector('#modal .pay-blk.is-unpaid');
+  assert.equal(await page.locator('#modal .pay-tile').count(), 5, 'five payment status buttons');
+  assert.equal(await page.getAttribute('#modal .pay-tile.on', 'data-s'), 'unpaid');
+  assert.match(await page.textContent('#modal .pay-blk'), /3,300฿/);
+  await page.click('#modal details[data-fold=record] summary');
   assert.equal(await page.inputValue('#modal form[data-form=payment] [name=amount]'), '3300', 'amount defaults to remaining');
   await page.fill('#modal form[data-form=payment] [name=amount]', '1000');
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   await page.setInputFiles('#modal form[data-form=payment] input[name=slip]', { name: 'slip.png', mimeType: 'image/png', buffer: png });
   await page.click('#modal form[data-form=payment] button[type=submit]');
-  await page.waitForSelector('#modal .pay-box.is-partial');
+  await page.waitForSelector('#modal .pay-blk.is-deposit');
   await page.waitForFunction(() => document.querySelector('#modal .slip-thumb img')?.src.startsWith('blob:'));
-  assert.match(await page.textContent('#modal .pay-box'), /มัดจำแล้ว/);
+  assert.match(await page.textContent('#modal .pay-tile.on'), /มัดจำแล้ว/);
   assert.equal(await page.inputValue('#modal form[data-form=payment] [name=amount]'), '2300', 'next amount = remaining');
   await page.selectOption('#modal form[data-form=payment] [name=method]', 'cash');
   await page.click('#modal form[data-form=payment] button[type=submit]');
-  await page.waitForSelector('#modal .pay-box.is-paid');
+  await page.waitForSelector('#modal .pay-blk.is-paid');
   d = await db();
   const ov = d.bookings.find((b) => b.guest_name === 'สมชาย');
   assert.ok(ov.paid && ov.amount_paid === 3300 && ov.paid_by === 'U1', 'paid in full, stamped');
   assert.equal(d.booking_payments.filter((x) => x.booking_id === ov.id).length, 2);
   assert.ok(/^[\w-]+\/slip-\d+\.jpg$/.test(d.booking_payments[0].slip_path), 'slip stored under booking id');
   await shot('05b-paid-slip');
+  await page.click('#modal details[data-fold=history] summary');
   await page.waitForSelector('#history .hrow');
-  assert.match(await page.textContent('#history'), /ค้างจ่าย → จ่ายแล้ว/);
+  assert.match(await page.textContent('#history'), /ยังไม่จ่าย → มัดจำแล้ว/);
+  assert.match(await page.textContent('#history'), /มัดจำแล้ว → จ่ายครบ/);
   await page.click('#modal [data-action=close-modal]');
-  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.paid').count());
-  step('payment: deposit with slip (partial), remaining in cash (paid), history');
+  assert.ok(await page.locator('.brow:has-text("สมชาย") .pill.ps-paid').count());
+  step('payment: deposit with slip (deposit), remaining in cash (paid in full), history');
+
+  // Payment status by one tap, without recording money
+  await page.click('.brow:has-text("Overlap")');
+  await page.click('#modal .pay-tile[data-s=waiting]');
+  await page.waitForSelector('#modal .pay-tile.on[data-s=waiting]');
+  assert.equal((await db()).bookings.find((b) => b.guest_name === 'Overlap').pay_status, 'waiting');
+  await page.click('#modal .pay-tile[data-s=at_venue]');
+  await page.waitForSelector('#modal .pay-tile.on[data-s=at_venue]');
+  assert.equal((await db()).bookings.find((b) => b.guest_name === 'Overlap').pay_status, 'at_venue');
+  await page.click('#modal [data-action=close-modal]');
+  step('payment status: one tap on Waiting / Pay at door');
 
   // Extras: package per person adds to the amount due
   await page.click('.brow:has-text("Late")');
+  await page.click('#modal details[data-fold=items] summary');
   await page.waitForSelector('#modal form[data-form=item]');
   assert.equal(await page.inputValue('#modal form[data-form=item] [name=qty]'), '2', 'per-person package qty = party size');
   await page.click('#modal form[data-form=item] button[type=submit]');
   await page.waitForSelector('#modal .items-card .pay-row');
-  assert.match(await page.textContent('#modal .pay-box'), /1,400฿/);
+  assert.match(await page.textContent('#modal .pay-blk'), /1,400฿/);
   step('extras: per-person package adds to amount due');
 
   // LINE message: prepared text, LINE link, mark as sent
+  await page.click('#modal details[data-fold=messages] summary');
   await page.click('#modal [data-action=share][data-kind=confirm]');
   const msg = await page.inputValue('#share-text');
   assert.match(msg, /คุณLate/); assert.match(msg, /ยอดรวม 1,400฿/);
@@ -201,18 +221,30 @@ try {
   assert.ok((await db()).bookings.find((b) => b.guest_name === 'Late').confirmed_at, 'confirmed saved');
   step('LINE: message prepared with payment line, sent + confirmed recorded');
 
-  // Guest: tag VIP; returning guest recognised by phone in a new booking
-  await page.waitForSelector('#modal .guest-card');
-  await page.click('#modal [data-action=guest-tag][data-tag=vip]');
-  await page.waitForSelector('#modal [data-tag=vip].on');
+  // Returning guest recognised by phone; customer category with discount
   await page.click('#modal [data-action=close-modal]');
   await page.click('[data-action=new-booking]');
   await page.fill('#modal [name=phone]', '0811111111');
   await page.waitForSelector('#guest-hint .guest-hint b');
   assert.equal(await page.inputValue('#modal [name=guest_name]'), 'Late', 'name filled from guest');
-  assert.match(await page.textContent('#guest-hint'), /VIP/);
-  await page.click('#modal [data-action=close-modal]');
-  step('guests: VIP tag, returning guest recognised and name filled');
+  assert.ok(await page.locator('#modal [name=category_id][value=""]').isChecked(), 'category defaults to General');
+  await page.click('#modal .chip-radio:has-text("เพื่อนหุ้นส่วน")');
+  await page.selectOption('#modal [name=table_id]', 'T1');
+  await page.selectOption('#modal [name=time]', '23:00');
+  await page.fill('#modal [name=guest_name]', 'Partner');
+  await page.click('#modal button[type=submit]');
+  await page.waitForSelector('#modal', { state: 'hidden' });
+  d = await db();
+  const partner = d.bookings.find((b) => b.guest_name === 'Partner');
+  assert.equal(partner.category_id, 'C1');
+  assert.equal(partner.duration_min, 180, 'whole-night: 23:00 holds the table until 02:00');
+  await page.click('.brow:has-text("Partner")');
+  assert.match(await page.textContent('#modal .bk-head'), /เพื่อนหุ้นส่วน/);
+  assert.match(await page.textContent('#modal .money'), /−330฿/);
+  assert.match(await page.textContent('#modal .money'), /2,970฿/);
+  await page.click('#modal [data-action=set-status][data-s=cancelled]');
+  await page.waitForSelector('#modal', { state: 'hidden' });
+  step('returning guest recognised; category discount 10% shown; whole-night length');
 
   // Edit booking
   await page.click('.brow:has-text("Late")');
@@ -228,6 +260,8 @@ try {
   await page.click('[data-action=filter][data-f=unpaid]');
   assert.equal(await page.locator('#list-rows .brow').count(), 1, 'only the booking with the unpaid package');
   assert.match(await page.textContent('#list-rows'), /Late/);
+  await page.click('[data-action=filter][data-f=closed]');
+  assert.equal(await page.locator('#list-rows .brow').count(), 3, 'done, no-show, cancelled');
   await page.click('[data-action=filter][data-f=all]');
   await page.fill('input.search', 'late');
   assert.equal(await page.locator('#list-rows .brow').count(), 1, 'search by name');
@@ -250,7 +284,7 @@ try {
   await go('summary');
   assert.deepEqual(await page.locator('.stats.money .stat .num').allTextContents(), ['3,300฿', '1,400฿'], 'paid / still owed');
   const nums = await page.locator('.stats:not(.money) .stat .num').allTextContents();
-  assert.deepEqual(nums, ['3', '6', '1', '0', '1'], 'bookings, guests (4 done + 2 walk-in), walk-ins, cancelled, no-show');
+  assert.deepEqual(nums, ['4', '6', '1', '1', '1'], 'bookings, guests (4 done + 2 walk-in), walk-ins, cancelled, no-show');
   await shot('07-summary');
   step('nightly summary numbers');
 
@@ -324,7 +358,8 @@ try {
   await page.waitForSelector('[data-action=edit-start]');
   assert.ok((await db()).tables.find((x) => x.id === cT2.id).archived);
   await go('map');
-  await page.selectOption('[data-change=night-layout]', concert.id);
+  await page.click('[data-action=pick-layout]');
+  await page.click(`[data-action=choose-layout][data-id="${concert.id}"]`);
   await page.waitForSelector('form[data-form=mapping]');
   await shot('09-move-bookings');
   const sels = page.locator('form[data-form=mapping] select');
@@ -350,11 +385,30 @@ try {
   await page.waitForSelector('.srow:has-text("Mai")');
   await shot('10-staff');
   await go('settings');
+  assert.ok(await page.locator('form[data-form=settings] [name=default_duration_min]').isHidden(), 'no length to set in whole-night mode');
+  await page.click('form[data-form=settings] .radio-card:has-text("กำหนดระยะเวลา")');
   await page.fill('form[data-form=settings] [name=default_duration_min]', '90');
   await page.click('form[data-form=settings] button[type=submit]');
   await page.waitForTimeout(100);
   assert.equal((await db()).settings[0].default_duration_min, 90);
-  step('add staff account and change settings');
+  assert.equal((await db()).settings[0].booking_mode, 'timed');
+  await go('map');
+  assert.ok(await page.locator('#at-range').count(), 'time slider back in timed mode');
+  await page.click('[data-action=new-booking].nb');
+  assert.equal(await page.inputValue('#modal [name=duration_min]'), '90', 'length field in timed mode');
+  await page.click('#modal [data-action=close-modal]');
+  await go('settings');
+  await page.click('form[data-form=settings] .radio-card:has-text("จองทั้งคืน")');
+  await page.click('form[data-form=settings] button[type=submit]');
+  await page.waitForTimeout(100);
+  assert.equal((await db()).settings[0].booking_mode, 'night');
+  // categories: managers add one with a discount
+  const newCat = page.locator('form[data-form=category]').last();
+  await newCat.locator('[name=name]').fill('ส่วนลดพนักงาน');
+  await newCat.locator('[name=discount_pct]').fill('20');
+  await newCat.locator('button[type=submit]').click();
+  await page.waitForFunction(() => window.__db.categories.some((c) => c.name === 'ส่วนลดพนักงาน' && c.discount_pct === 20));
+  step('add staff, booking-length mode on/off, customer categories');
 
   // Language
   await page.click('.bottomnav [data-action=more]');
@@ -379,8 +433,9 @@ try {
   await page.click('button[type=submit]');
   await page.waitForSelector('svg.floor');
   await page.click('.bottomnav [data-action=more]');
-  assert.equal(await page.locator('.menu-item[data-action=view]').count(), 0, 'no manager pages');
-  assert.equal(await page.locator('[data-change=night-layout]').count(), 0);
+  assert.deepEqual(await page.locator('.menu-item[data-action=view]').evaluateAll((els) => els.map((e) => e.dataset.v)), ['concert'], 'only the concert report, no manager pages');
+  await page.click('#modal [data-action=close-modal]');
+  assert.equal(await page.locator('[data-action=pick-layout]').count(), 0, 'staff cannot switch the layout');
   step('staff sees no manager tabs or layout picker');
 
   assert.deepEqual(errors, [], 'no browser errors');

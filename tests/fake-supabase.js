@@ -3,7 +3,7 @@
   const uid = () => crypto.randomUUID();
   const now = () => new Date().toISOString();
   const db = (window.__db = {
-    settings: [{ id: 1, open_time: '18:00:00', close_time: '02:00:00', default_duration_min: 120, shop_name: 'Music Table',
+    settings: [{ id: 1, open_time: '18:00:00', close_time: '02:00:00', default_duration_min: 120, booking_mode: 'night', shop_name: 'Music Table',
       confirm_template: 'สวัสดีค่ะคุณ{name}\nยืนยันโต๊ะ {table} ที่ {shop}\n{date} {time} น. {guests} ท่าน\n{payment}',
       reminder_template: 'เตือนคุณ{name} โต๊ะ {table} {date} {time} น.' }],
     products: [
@@ -11,6 +11,10 @@
       { id: 'PR2', name: 'Monkey Shoulder', price: 1990, per_person: false, active: true, created_at: '2026-01-02' },
     ],
     guests: [],
+    categories: [
+      { id: 'C1', name: 'เพื่อนหุ้นส่วน', color: '#F39646', discount_pct: 10, active: true, sort: 1, created_at: '2026-01-01' },
+      { id: 'C2', name: 'ส่วนลดวันเกิด', color: '#E04314', discount_pct: 0, active: true, sort: 2, created_at: '2026-01-02' },
+    ],
     booking_items: [],
     booking_payments: [],
     app_logs: [],
@@ -55,18 +59,28 @@
     else if (!g.name) g.name = b.guest_name ?? '';
     b.guest_id = g.id;
   }
-  const dueOf = (b) => [b.table_id, ...(b.extra_table_ids ?? [])].reduce((n, id) => n + (db.tables.find((x) => x.id === id)?.price ?? 0), 0)
+  // Mirrors public.booking_due(): agreed price, else table price less the category discount, plus items.
+  const tablePrice = (b) => [b.table_id, ...(b.extra_table_ids ?? [])].reduce((n, id) => n + (db.tables.find((x) => x.id === id)?.price ?? 0), 0);
+  const dueOf = (b) => (b.sold_price ?? Math.trunc(tablePrice(b) * (100 - (db.categories.find((c) => c.id === b.category_id)?.discount_pct ?? 0)) / 100))
     + db.booking_items.filter((i) => i.booking_id === b.id).reduce((n, i) => n + i.unit_price * i.qty, 0);
   function recompute(bookingId) {
     const b = db.bookings.find((x) => x.id === bookingId);
     if (!b) return;
     const got = db.booking_payments.filter((p) => p.booking_id === bookingId).reduce((n, p) => n + p.amount, 0);
-    const paid = got > 0 && got >= dueOf(b);
-    if (b.amount_paid === got && b.paid === paid) return;
+    const due = dueOf(b), cur = b.pay_status ?? 'unpaid';
+    // Mirrors public.recompute_payment(): money moves the status forward, never back.
+    const next = got > 0 && got >= due && ['unpaid', 'waiting', 'deposit'].includes(cur) ? 'paid'
+      : got > 0 && got < due && ['unpaid', 'waiting'].includes(cur) ? 'deposit' : cur;
+    if (b.amount_paid === got && cur === next) return;
     const old = { ...b };
     b.amount_paid = got;
-    if (paid !== b.paid) { b.paid = paid; b.paid_at = paid ? now() : null; b.paid_by = paid ? session?.user.id : null; }
+    setPay(b, next);
     logHistory(old, b);
+  }
+  function setPay(b, st) {
+    const paid = st === 'paid';
+    if (paid !== b.paid) { b.paid_at = paid ? now() : null; b.paid_by = paid ? session?.user.id : null; }
+    b.pay_status = st; b.paid = paid;
   }
   const guestStats = () => db.guests.map((g) => {
     const mine = db.bookings.filter((b) => b.guest_id === g.id);
@@ -105,14 +119,19 @@
           return { data: [r], error: null };
         }
         if (this.t === 'bookings') {
+          const pay = r.pay_status ?? 'unpaid';
+          const wb = r.wristband_at ? now() : null;
           Object.assign(r, { paid: false, paid_at: null, paid_by: null, slip_path: null, amount_paid: 0, reminded_at: r.reminded_at ?? null, confirmed_at: null,
+            category_id: r.category_id ?? null, sold_price: r.sold_price ?? null, wristband_at: wb, wristband_by: wb ? session.user.id : null,
             extra_table_ids: r.extra_table_ids ?? [], status: r.status ?? 'booked', is_walk_in: !!r.is_walk_in, note: r.note ?? '', phone: r.phone ?? '',
             guest_name: r.guest_name ?? '', night: nightOf(r.start_at), created_by: session.user.id, updated_by: session.user.id });
+          setPay(r, pay);
           linkGuest(r);
           logHistory(null, r);
         }
         if (this.t === 'layouts') Object.assign(r, { is_default: false, created_at: now() });
         if (this.t === 'tables') Object.assign(r, { archived: false, kind: r.kind ?? 'table' });
+        if (this.t === 'categories') Object.assign(r, { created_at: now() });
         rows.push(r); out = [r];
       } else if (this.op === 'update') {
         out = rows.filter((r) => this.filters.every((f) => f(r)));
@@ -122,9 +141,11 @@
           Object.assign(r, this.t === 'bookings' ? rest : this.payload);
           if (this.t === 'bookings') {
             r.night = nightOf(r.start_at); r.updated_by = session.user.id;
+            setPay(r, r.pay_status ?? 'unpaid');
+            if ('wristband_at' in this.payload) { r.wristband_at = this.payload.wristband_at ? now() : null; r.wristband_by = r.wristband_at ? session.user.id : null; }
             if (normPhone(r.phone) !== normPhone(old.phone)) linkGuest(r);
             logHistory(old, r);
-            if (String(r.table_id) !== String(old.table_id) || JSON.stringify(r.extra_table_ids) !== JSON.stringify(old.extra_table_ids)) recompute(r.id);
+            if (['table_id', 'extra_table_ids', 'category_id', 'sold_price'].some((k) => JSON.stringify(r[k]) !== JSON.stringify(old[k]))) recompute(r.id);
           }
         }
       } else if (this.op === 'delete') {

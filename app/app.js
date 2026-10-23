@@ -2,15 +2,25 @@ import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { t, getLang, setLang } from './i18n.js';
 import * as T from './time.js';
 import { log, configure as configureLog, installGlobalHandlers, recent as recentLogs, setDebug, isDebug, flush as flushLogs } from './log.js';
-import { dueOf, paidOf, payState, tableIdsOf } from './money.js';
+import { dueOf, paidOf, tableIdsOf, listPriceOf, netPriceOf, receivedOf, stillOwes, PAY_STATUSES } from './money.js';
 import { fill, paymentLine, lineShareUrl } from './share.js';
-import { summarizeRange, toCSV } from './reports.js';
+import { summarizeRange, toCSV, concertRows, freeTables } from './reports.js';
+import { concertWorkbook, loadExcelJS } from './concert-xlsx.js';
 import { VERSION } from './version.js';
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Payment status icons (one per bookings.pay_status).
+const PAY_ICON = {
+  unpaid: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+  waiting: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  deposit: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
+  paid: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+  at_venue: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
+};
 
 const ICON = {
   left: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
@@ -38,6 +48,12 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>',
   trend: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>',
   download: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+  wristband: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="4"/><path d="M8 8v8M16 8v8"/></svg>',
+  ticket: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg>',
+  plusB: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   warn: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
 };
 
@@ -67,24 +83,27 @@ const hhmm = (iso) => T.bkkParts(Date.parse(iso)).hhmm;
 const fmtNight = (d) => { const p = dayParts(d); return `${p.wd} ${p.day} ${p.mon}`; };
 const baht = (n) => `${Number(n || 0).toLocaleString('en-US')}฿`;
 // Money for a booking, from its tables, items and payment rows.
-const dueOfB = (b) => dueOf(b, tableById, b.booking_items ?? []);
+const categoryById = (id) => (id ? (S.categories ?? []).find((c) => c.id === id) ?? null : null);
+const wholeNight = () => S.settings?.booking_mode !== 'timed';
+const TOPTS = () => ({ wholeNight: wholeNight() });
+const dueOfB = (b) => dueOf(b, tableById, b.booking_items ?? [], categoryById(b.category_id));
 const paidOfB = (b) => paidOf(b.booking_payments ?? []);
-const payStateOf = (b) => payState(dueOfB(b), paidOfB(b));
+const receivedOfB = (b) => receivedOf(b.pay_status, dueOfB(b), paidOfB(b));
+const payOf = (b) => b.pay_status ?? 'unpaid';
 const isOpen = (b) => b.status !== 'cancelled' && b.status !== 'no_show';
-const owes = (b) => isOpen(b) && dueOfB(b) > paidOfB(b);
+// Payment matters when the table has a price, something was charged, or staff set a status.
+const tracksPayment = (b) => dueOfB(b) > 0 || payOf(b) !== 'unpaid' || paidOfB(b) > 0;
+const owes = (b) => isOpen(b) && tracksPayment(b) && stillOwes(payOf(b));
 const needsPayment = (b) => isOpen(b) && dueOfB(b) > 0;
 function payPill(b) {
-  const st = payStateOf(b);
-  if (st === 'paid') return `<span class="pill paid">${t('paid')}</span>`;
-  if (!isOpen(b)) return '';
-  if (st === 'partial') return `<span class="pill partial">${t('deposit_paid')}</span>`;
-  if (st === 'unpaid') return `<span class="pill unpaid">${t('unpaid')}</span>`;
-  return '';
+  if (!tracksPayment(b) || (!isOpen(b) && payOf(b) !== 'paid')) return '';
+  const st = payOf(b);
+  return `<span class="pill ps ps-${st}">${PAY_ICON[st]}${t('ps_' + st)}</span>`;
 }
+const catChip = (b) => { const c = categoryById(b.category_id); return c ? `<span class="cat-chip" style="--c:${esc(c.color)}">${esc(c.name)}</span>` : ''; };
+// Concert night = tonight's layout sells tables (has prices).
+const isConcertLayout = (lid) => tablesOf(lid).some((x) => x.price != null);
 const tablesLabel = (b) => tableIdsOf(b).map((id) => tableById(id)?.label ?? '?').join('+');
-const guestTags = (b) => b.guest?.tags ?? [];
-const STAR = '<svg class="star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z" fill="currentColor"/></svg>';
-const tagPills = (tags) => tags.map((g) => `<span class="tag-pill tag-${esc(g)}">${g === 'vip' ? STAR : ''}${esc(t('tag_' + g) || g)}</span>`).join('');
 const tableLabel = (id) => { const x = tableById(id); return x ? `${x.label} · ${t('floor')} ${x.floor}` : '—'; };
 
 function atMs() {
@@ -97,6 +116,7 @@ const ERRORS = [
   'table_has_future_bookings', 'need_one_manager', 'unmapped_bookings', 'cannot_delete_default_layout',
   'invalid_status_change', 'table_not_in_night_layout', 'table_archived', 'forbidden',
   'guest_name_required', 'phone_required', 'password_too_short', 'invalid_email', 'invalid_extra_tables', 'not_a_table',
+  'excel_load_failed',
 ];
 function errMsg(e) {
   const m = e?.message ?? String(e);
@@ -126,14 +146,15 @@ async function run(promise, what = 'db') {
 
 // ───────── Data ─────────
 async function loadBase() {
-  const [s, l, tb, p, pr] = await Promise.all([
+  const [s, l, tb, p, pr, cats] = await Promise.all([
     run(sb.from('settings').select('*').single(), 'load.settings'),
     run(sb.from('layouts').select('*').order('created_at'), 'load.layouts'),
     run(sb.from('tables').select('*'), 'load.tables'),
     run(sb.from('profiles').select('*').order('created_at'), 'load.profiles'),
     run(sb.from('products').select('*').order('created_at'), 'load.products'),
+    run(sb.from('categories').select('*').order('sort').order('created_at'), 'load.categories'),
   ]);
-  S.settings = s; S.layouts = l; S.profiles = p; S.products = pr;
+  S.settings = s; S.layouts = l; S.profiles = p; S.products = pr; S.categories = cats;
   S.tables = tb.map((x) => ({ ...x, x: Number(x.x), y: Number(x.y) }));
   if (!S.layouts.some((x) => x.id === S.editLayoutId)) S.editLayoutId = null;
 }
@@ -162,7 +183,7 @@ let channel = null, reloadTimer = null;
 function setupRealtime() {
   if (channel) return;
   channel = sb.channel('db');
-  for (const table of ['bookings', 'tables', 'layouts', 'day_layouts', 'settings', 'booking_payments', 'booking_items', 'guests', 'products']) {
+  for (const table of ['bookings', 'tables', 'layouts', 'day_layouts', 'settings', 'booking_payments', 'booking_items', 'guests', 'products', 'categories']) {
     channel.on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
       if (table === 'bookings') notifyFromChange(payload);
       clearTimeout(reloadTimer);
@@ -224,7 +245,7 @@ function render() {
   if (!S.settings) { app.innerHTML = `<div class="center muted">${t('loading')}</div>`; return; }
   const body = {
     map: viewMap, list: viewList, summary: viewSummary,
-    layouts: viewLayouts, staff: viewStaff, settings: viewSettings, reports: viewReports,
+    layouts: viewLayouts, staff: viewStaff, settings: viewSettings, reports: viewReports, concert: viewConcert,
   }[S.view]();
   app.innerHTML = `<div class="shell">${viewRail()}<div class="col">${viewTop()}<main>${body}</main></div>${
     S.view === 'map' ? `<aside class="side" aria-label="${t('tonight')}">${viewAside()}</aside>` : ''}</div>${viewBottomNav()}`;
@@ -246,32 +267,37 @@ window.addEventListener('resize', () => fitFloors());
 
 const langBtn = () => `<button class="ghost small" data-action="lang">${getLang() === 'th' ? 'EN' : 'ไทย'}</button>`;
 
+const brandLockup = (cls = '') => `<div class="brand ${cls}"><img src="brand/lockup.png" alt="Perfect Strangers" width="330" height="60"><span class="brand-sub">${t('brand_sub')}</span></div>`;
+
 function viewLogin() {
   return `<div class="login">
-    <div class="login-top">${langBtn()}</div>
-    <h1>Music Table</h1>
-    <p class="muted">${t('login_hint')}</p>
-    <form data-form="login" class="stack">
-      <label>${t('email')}<input name="email" type="email" autocomplete="username" required></label>
-      <label>${t('password')}<input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="primary" type="submit">${t('login')}</button>
-    </form>
+    <div class="login-glow" aria-hidden="true"></div>
+    <div class="login-card">
+      <div class="login-top">${langBtn()}</div>
+      ${brandLockup('lg')}
+      <p class="muted">${t('login_hint')}</p>
+      <form data-form="login" class="stack">
+        <label>${t('email')}<input name="email" type="email" autocomplete="username" required></label>
+        <label>${t('password')}<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">${t('login')}</button>
+      </form>
+    </div>
   </div>`;
 }
 
 function viewInactive() {
-  return `<div class="login">
-    <h1>Music Table</h1>
+  return `<div class="login"><div class="login-glow" aria-hidden="true"></div><div class="login-card">
+    ${brandLockup('lg')}
     <p>${t('inactive')}</p>
     <button data-action="logout">${t('logout')}</button>
-  </div>`;
+  </div></div>`;
 }
 
 const wide = () => window.matchMedia('(min-width: 1024px)').matches;
 const hasBottomNav = () => !window.matchMedia('(min-width: 768px)').matches;
-const NIGHT_VIEWS = ['map', 'list', 'summary'];
+const NIGHT_VIEWS = ['map', 'list', 'summary', 'concert'];
 function navItems() {
-  const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart]];
+  const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart], ['concert', 'tab_concert', ICON.ticket]];
   if (isManager()) items.push(['reports', 'tab_reports', ICON.trend], ['layouts', 'tab_layouts', ICON.edit], ['staff', 'tab_staff', ICON.people], ['settings', 'tab_settings', ICON.gear]);
   return items;
 }
@@ -280,7 +306,7 @@ const navBtn = (v, k, ic, cls) =>
 
 function viewRail() {
   return `<nav class="rail" aria-label="${t('menu')}">
-    <div class="rail-logo" aria-hidden="true">MT</div>
+    <div class="rail-logo"><img src="brand/mark.png" alt="Perfect Strangers" width="44" height="44"></div>
     ${navItems().map(([v, k, ic]) => navBtn(v, k, ic, 'rail-item')).join('')}
     <div class="grow"></div>
     ${bellButton('rail-item')}
@@ -329,15 +355,14 @@ function statsRow() {
 function viewTop() {
   const night = NIGHT_VIEWS.includes(S.view);
   const p = dayParts(S.night);
-  const layoutPicker = isManager()
-    ? `<select class="layout-pick" data-change="night-layout" aria-label="${t('night_layout')}">${S.layouts.map((l) =>
-        `<option value="${l.id}" ${l.id === nightLayoutId() ? 'selected' : ''}>${t('layout')}: ${esc(l.name)}</option>`).join('')}</select>`
-    : `<span class="eyebrow">${t('layout')}: ${esc(layoutName(nightLayoutId()))}</span>`;
+  const lid = nightLayoutId();
+  const layoutChip = `<button class="layout-chip ${isConcertLayout(lid) ? 'concert' : ''}" data-action="${isManager() ? 'pick-layout' : 'noop'}" ${isManager() ? '' : 'disabled'} aria-label="${t('night_layout')}">
+      ${isConcertLayout(lid) ? ICON.ticket : ICON.map}<span><small>${t('tonight_layout')}</small>${esc(layoutName(lid))}</span>${isManager() ? ICON.chev : ''}</button>`;
   if (!night) return `<header class="topbar"><div class="row between"><h1 class="page-title">${t('tab_' + S.view)}</h1>${bellButton('phone-bell')}</div></header>`;
   return `<header class="topbar">
-    <div class="row between wrap top-row">
-      <div><div class="eyebrow">MUSIC TABLE</div><div class="night-title">${p.wd} ${p.day} ${p.mon}${isTonight() ? ` <span class="tag">${t('tonight')}</span>` : ''}</div></div>
-      <div class="row">${layoutPicker}${bellButton('phone-bell')}</div>
+    <div class="row between top-row">
+      <div class="top-brand"><img class="top-mark" src="brand/mark.png" alt="" width="28" height="28"><div><div class="eyebrow">PERFECT STRANGERS</div><div class="night-title">${p.wd} ${p.day} ${p.mon}${isTonight() ? ` <span class="tag">${t('tonight')}</span>` : ''}</div></div></div>
+      <div class="row">${layoutChip}${bellButton('phone-bell')}</div>
     </div>
     ${dateStrip()}
     ${statsRow()}
@@ -503,7 +528,7 @@ function mapSvg() {
   const ms = atMs();
   const body = items.map((tb) => {
     if (!isTable(tb)) return tableSvg(tb, '', []);
-    const st = T.tableStateAt(tb.id, S.bookings, ms);
+    const st = T.tableStateAt(tb.id, S.bookings, ms, TOPTS());
     const info = st.booking ? hhmm(st.booking.start_at) : st.next ? hhmm(st.next.start_at) : '';
     return tableSvg(tb, 'st-' + st.state + (tb.id === S.selTable && wide() ? ' sel' : ''), [tb.label, info]);
   }).join('');
@@ -528,7 +553,7 @@ function upcomingRow(b) {
   return `<div class="up-row ${late ? 'late' : ''}">
     <button class="up-main" data-action="open-booking" data-id="${b.id}">
       <span class="time">${hhmm(b.start_at)}</span>
-      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tablesLabel(b))} ${guestTags(b).includes('vip') ? STAR : ''} ${owes(b) ? payPill(b) : ''}</b>
+      <span class="grow"><b>${esc(b.guest_name || t('walk_in'))} · ${esc(tablesLabel(b))} ${catChip(b)} ${owes(b) ? payPill(b) : ''}</b>
         <span class="small-text">${late ? t('late_by').replace('{n}', Math.round((Date.now() - T.startMs(b)) / 60000)) + ' · ' : ''}${b.party_size} ${t('people')}${b.note ? ' · ' + esc(b.note) : ''}</span></span>
     </button>
     ${isTonight() ? `<button class="${late ? 'primary' : 'ghost'} small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button>` : ''}
@@ -546,12 +571,15 @@ function viewMap() {
     <div class="row wrap between toolbar">
       <div class="seg" role="tablist">${[1, 2].map((f) =>
         `<button role="tab" aria-selected="${S.floor === f}" class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
-      <div class="timebar">
+      ${wholeNight() ? '' : `<div class="timebar">
         ${ICON.clock}<span id="at-label" class="at-label">${atLabel()}</span>
         <input id="at-range" type="range" min="0" max="${slots.length - 1}" step="1" value="${atIndex()}" data-input="at" aria-label="${t('at_time')}">
         ${isTonight() && S.at !== 'now' ? `<button class="ghost small" data-action="at-now">${t('now')}</button>` : ''}
+      </div>`}
+      <div class="row">
+        ${isConcertLayout(nightLayoutId()) ? `<button class="ghost nb" data-action="view" data-v="concert">${ICON.ticket} ${t('concert_report')}</button>` : ''}
+        <button class="primary nb" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
       </div>
-      <button class="primary nb" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
     ${tables.length ? `<div class="floor-wrap" id="floor-wrap">${mapSvg()}</div>`
       : `<p class="empty">${t('no_tables')}${isManager() ? ' ' + t('no_tables_mgr') : ''}</p>`}
@@ -586,8 +614,8 @@ function viewAside() {
   const up = T.upcoming(S.bookings, ms);
   const seated = S.bookings.filter((b) => b.status === 'seated');
   const selCard = sel && sel.layout_id === nightLayoutId() ? (() => {
-    const list = S.bookings.filter((b) => b.table_id === sel.id);
-    const free = isTonight() && T.tableStateAt(sel.id, S.bookings, Date.now()).state === 'free';
+    const list = S.bookings.filter((b) => T.tablesOf(b).includes(sel.id));
+    const free = isTonight() && T.tableStateAt(sel.id, S.bookings, Date.now(), TOPTS()).state === 'free';
     return `<div class="card sel-card">
       <div class="row between"><h2>${esc(sel.label)}</h2><button class="icon" data-action="unselect" aria-label="${t('close')}">${ICON.close}</button></div>
       <div class="muted small-text">${t('floor')} ${sel.floor} · ${sel.seats} ${t('seats_short')}</div>
@@ -609,7 +637,7 @@ function bookingRow(b) {
   const st = isTonight() && T.isLate(b, Date.now()) ? 'late' : b.status;
   return `<button class="brow st-${b.status}" data-action="open-booking" data-id="${b.id}">
     <span class="time">${hhmm(b.start_at)}</span>
-    <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong> ${guestTags(b).includes('vip') ? STAR : ''}
+    <span class="grow"><strong>${esc(b.guest_name || t('walk_in'))}</strong> ${catChip(b)}
       <span class="muted small-text"> ${esc(tablesLabel(b))} · ${t('floor')} ${tableById(b.table_id)?.floor ?? ''} · ${ICON.person} ${b.party_size}</span>
       ${b.confirmed_at ? `<span class="small-text c-ok">${ICON.check} ${t('confirmed')}</span>` : ''}
       ${b.note ? `<span class="muted small-text note">${esc(b.note)}</span>` : ''}</span>
@@ -653,9 +681,9 @@ function viewList() {
 function viewSummary() {
   const s = T.summary(S.bookings);
   const card = (n, label) => `<div class="stat"><div class="num">${n}</div><div class="muted">${label}</div></div>`;
-  const priced = S.bookings.filter((b) => needsPayment(b) || paidOfB(b) > 0);
-  const got = S.bookings.reduce((n, b) => n + paidOfB(b), 0);
-  const owed = S.bookings.filter(owes).reduce((n, b) => n + dueOfB(b) - paidOfB(b), 0);
+  const priced = S.bookings.filter((b) => needsPayment(b) || tracksPayment(b));
+  const got = S.bookings.reduce((n, b) => n + receivedOfB(b), 0);
+  const owed = S.bookings.filter(owes).reduce((n, b) => n + Math.max(0, dueOfB(b) - paidOfB(b)), 0);
   return `<section>
     ${priced.length ? `<div class="stats money">
       ${card(baht(got), t('sum_paid'))}
@@ -799,11 +827,36 @@ function viewSettings() {
       <div class="grid2">
         <label>${t('open_time')}<input name="open_time" type="time" value="${s.open_time.slice(0, 5)}" required></label>
         <label>${t('close_time')}<input name="close_time" type="time" value="${s.close_time.slice(0, 5)}" required></label>
-        <label>${t('default_duration')}<input name="default_duration_min" type="number" min="15" max="720" step="15" value="${s.default_duration_min}" required></label>
       </div>
       <p class="muted small-text">${t('night_rule')}</p>
+      <fieldset class="mode-pick">
+        <legend>${t('booking_mode')}</legend>
+        ${['night', 'timed'].map((m) => `<label class="radio-card"><input type="radio" name="booking_mode" value="${m}" ${(s.booking_mode ?? 'night') === m ? 'checked' : ''} data-change="mode">
+          <span><b>${t('mode_' + m)}</b><small>${t('mode_' + m + '_help')}</small></span></label>`).join('')}
+        <label class="duration-field" ${(s.booking_mode ?? 'night') === 'timed' ? '' : 'hidden'}>${t('default_duration')}<input name="default_duration_min" type="number" min="15" max="720" step="15" value="${s.default_duration_min}" required></label>
+      </fieldset>
       <button class="primary" type="submit">${t('save')}</button>
     </form>
+
+    <h2>${t('categories')}</h2>
+    <div class="panel stack">
+      <p class="muted small-text">${t('categories_help')}</p>
+      ${(S.categories ?? []).map((c) => `<form data-form="category" class="cat-row">
+        <input type="hidden" name="id" value="${c.id}">
+        <input type="color" name="color" value="${esc(c.color)}" aria-label="${t('color')}">
+        <input name="name" value="${esc(c.name)}" maxlength="60" required aria-label="${t('name')}">
+        <label class="inline-label pct"><input name="discount_pct" type="number" min="0" max="100" step="1" value="${c.discount_pct}" aria-label="${t('discount_pct')}"> %</label>
+        <label class="inline-label"><input type="checkbox" name="active" ${c.active ? 'checked' : ''}> ${t('active')}</label>
+        <button class="small" type="submit">${t('save')}</button>
+      </form>`).join('')}
+      <form data-form="category" class="cat-row">
+        <input type="color" name="color" value="#F39646" aria-label="${t('color')}">
+        <input name="name" maxlength="60" required placeholder="${t('new_category')}" aria-label="${t('new_category')}">
+        <label class="inline-label pct"><input name="discount_pct" type="number" min="0" max="100" step="1" value="0" aria-label="${t('discount_pct')}"> %</label>
+        <input type="hidden" name="active" value="on">
+        <button class="primary small" type="submit">${ICON.plus} ${t('add')}</button>
+      </form>
+    </div>
 
     <h2>${t('messages')}</h2>
     <form data-form="messages" class="panel stack">
@@ -889,7 +942,7 @@ async function loadReport() {
   render();
   try {
     const rows = await run(sb.from('bookings').select(BOOKING_SELECT).gte('night', from).lte('night', to).order('start_at'), 'report.load');
-    S.report = { from, to, rows, sum: summarizeRange(rows, tableById) };
+    S.report = { from, to, rows, sum: summarizeRange(rows, tableById, categoryById) };
     log.info('report.loaded', { from, to, n: rows.length });
   } catch (e) { S.report = { from, to, error: errMsg(e) }; }
   if (S.view === 'reports') render();
@@ -938,9 +991,77 @@ function viewReports() {
   </section>`;
 }
 
+// ───────── Concert report: the bar's own sheet layout, live, with an Excel download ─────────
+const CONCERT_HEADERS = ['h_no', 'h_name', 'h_table', 'h_floor', 'h_people', 'h_price', 'h_sold', 'h_set', 'h_remark', 'h_promo', 'h_paid', 'h_wristband'];
+const fmtDateLong = (d) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const concertTitle = () => `${fmtDateLong(S.night)} - ${layoutName(nightLayoutId())}`;
+const concertData = () => concertRows(S.bookings, tableById, categoryById);
+function viewConcert() {
+  const lid = nightLayoutId();
+  if (!isConcertLayout(lid)) {
+    return `<section><p class="empty">${t('no_concert')}</p>${isManager() ? `<div class="row"><button class="primary" data-action="pick-layout">${ICON.ticket} ${t('pick_night_layout')}</button></div>` : ''}</section>`;
+  }
+  const { rows, totals } = concertData();
+  const free = freeTables(tablesOf(lid), S.bookings);
+  const paidN = totals.byPay.paid ?? 0;
+  return `<section class="concert">
+    <div class="row between wrap toolbar">
+      <h2 class="concert-title">${esc(concertTitle())}</h2>
+      <button class="primary" data-action="excel">${ICON.download} ${t('download_excel')}</button>
+    </div>
+    <div class="stats-row">
+      <span class="chip"><b>${totals.bookings}</b> ${t('bookings_word')}</span>
+      <span class="chip"><b>${totals.people}</b> ${t('people')}</span>
+      <span class="chip"><b>${baht(totals.netPrice)}</b> ${t('h_sold')}</span>
+      <span class="chip ps-paid"><b>${paidN}</b> ${t('ps_paid')}</span>
+      ${totals.bookings - paidN ? `<span class="chip ps-waiting"><b>${totals.bookings - paidN}</b> ${t('f_unpaid')}</span>` : ''}
+      <span class="chip"><b>${totals.wristbands}/${totals.bookings}</b> ${t('wristband')}</span>
+    </div>
+    <div class="sheet-wrap" role="region" aria-label="${t('concert_report')}" tabindex="0">
+      <table class="xsheet">
+        <thead><tr>${CONCERT_HEADERS.map((k) => `<th>${t(k)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td class="c">${r.no}</td>
+          <td><button class="linkish" data-action="open-booking" data-id="${r.booking.id}">${esc(r.name)}</button> <span class="muted">${esc(r.phone)}</span></td>
+          <td class="c"><b>${esc(r.tables)}</b></td>
+          <td class="c">${t('floor_' + r.floor) || r.floor}</td>
+          <td class="c">${r.party}</td>
+          <td class="n">${r.listPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+          <td class="n">${r.netPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+          <td>${esc(r.setDrinks)}</td>
+          <td>${esc(r.note)}</td>
+          <td>${r.category ? esc(r.category) + (r.discount ? ` ${r.discount}%` : '') : t('na')}</td>
+          <td class="pay-cell ps-${r.payStatus}">${t('ps_' + r.payStatus)}</td>
+          <td class="c"><button class="wb-check ${r.wristband ? 'on' : ''}" data-action="wristband" data-from="report" data-id="${r.booking.id}" data-v="${r.wristband ? 0 : 1}" aria-pressed="${r.wristband}" aria-label="${t('wristband')} ${esc(r.tables)}">${r.wristband ? ICON.check : ''}</button></td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr><td></td><td>${t('total')}</td><td></td><td></td><td class="c">${totals.people}</td>
+          <td class="n">${totals.listPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+          <td class="n">${totals.netPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+          <td></td><td></td><td></td><td></td><td class="c">${totals.wristbands}/${totals.bookings}</td></tr></tfoot>
+      </table>
+    </div>
+    ${free.length ? `<p class="muted small-text">${t('free_tables')} (${free.length}): ${free.map((x) => esc(x.label)).join(', ')}</p>` : ''}
+    <p class="muted small-text">${t('excel_help')}</p>
+  </section>`;
+}
+async function downloadConcertExcel() {
+  try {
+    const ExcelJS = await loadExcelJS();
+    const { rows, totals } = concertData();
+    const labels = {
+      headers: CONCERT_HEADERS.map(t), floor: { 1: t('floor_1'), 2: t('floor_2') }, none: t('na'), yes: '✓', total: t('total'),
+      pay: Object.fromEntries(PAY_STATUSES.map((p) => [p, t('ps_' + p)])),
+    };
+    const buf = await concertWorkbook(ExcelJS, { title: concertTitle(), rows, totals, labels, sheetName: layoutName(nightLayoutId()) });
+    const name = `${S.night} ${layoutName(nightLayoutId())}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
+    download(name, buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    log.info('concert.excel', { night: S.night, rows: rows.length });
+  } catch (e) { log.error('concert.excel_failed', e); toast(errMsg(e), true); }
+}
+
 // ───────── CSV export (opens in Google Sheets: File → Import → Upload) ─────────
-function download(name, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+function download(name, data, type = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([data], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
@@ -959,8 +1080,9 @@ async function exportCSV(kind, fromReport, days) {
         { label: 'night', get: (b) => b.night }, { label: 'time', get: (b) => hhmm(b.start_at) },
         { label: 'tables', get: tablesLabel }, { label: 'guest', get: (b) => b.guest_name }, { label: 'phone', get: (b) => b.phone },
         { label: 'party', get: (b) => b.party_size }, { label: 'status', get: (b) => b.status }, { label: 'walk_in', get: (b) => b.is_walk_in },
-        { label: 'due', get: dueOfB }, { label: 'paid', get: paidOfB }, { label: 'note', get: (b) => b.note },
-        { label: 'tags', get: (b) => guestTags(b).join(' ') }, { label: 'created_by', get: (b) => personName(b.created_by) }, { label: 'id', get: (b) => b.id },
+        { label: 'due', get: dueOfB }, { label: 'paid', get: paidOfB }, { label: 'pay_status', get: (b) => t('ps_' + payOf(b)) },
+        { label: 'category', get: (b) => categoryById(b.category_id)?.name ?? '' }, { label: 'wristband', get: (b) => (b.wristband_at ? 'yes' : '') },
+        { label: 'note', get: (b) => b.note }, { label: 'created_by', get: (b) => personName(b.created_by) }, { label: 'id', get: (b) => b.id },
       ]);
     } else if (kind === 'payments') {
       const pays = rows.flatMap((b) => (b.booking_payments ?? []).map((p) => ({ ...p, b })));
@@ -998,7 +1120,7 @@ function openTable(id) {
   const tb = tableById(id);
   const ms = atMs();
   const list = S.bookings.filter((b) => T.tablesOf(b).includes(id));
-  const free = isTonight() && T.tableStateAt(id, S.bookings, Date.now()).state === 'free';
+  const free = isTonight() && T.tableStateAt(id, S.bookings, Date.now(), TOPTS()).state === 'free';
   openModal(`<h2>${esc(tb.label)} <span class="muted small-text">${t('floor')} ${tb.floor} · ${tb.seats} ${t('seats_short')}${tb.price != null ? ' · ' + baht(tb.price) : ''}</span></h2>
     <div class="list">${list.length ? list.map((b) => b.status === 'booked' && isTonight()
       ? `<div class="row">${bookingRow(b)}<button class="primary small" data-action="set-status" data-id="${b.id}" data-s="seated">${t('arrived')}</button></div>`
@@ -1026,32 +1148,61 @@ function bookingForm(b, opts = {}) {
   const time = b ? hhmm(b.start_at) : S.at !== 'now' ? S.at : defaultTime(times);
   if (time && !times.includes(time)) times.unshift(time);
   const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, time, S.settings)).toISOString(), duration_min: S.settings.default_duration_min, id: b?.id };
-  const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings).length > 0;
+  const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings, TOPTS()).length > 0;
   const tableId = b?.table_id ?? opts.tableId ?? (wide() && tableById(S.selTable)?.layout_id === lid ? S.selTable : null)
     ?? (tables.find((x) => x.floor === S.floor && !busy(x)) ?? tables.find((x) => !busy(x)) ?? tables[0])?.id;
   if (!tables.length) return `<p class="empty">${t('no_tables')}</p>`;
+  const priced = isConcertLayout(lid);
+  const cats = (S.categories ?? []).filter((c) => c.active || c.id === b?.category_id);
+  const catRadio = (id, name, color, disc) => `<label class="chip-radio" style="--c:${esc(color)}"><input type="radio" name="category_id" value="${id}" ${(b?.category_id ?? '') === id ? 'checked' : ''}>
+    <span>${esc(name)}${disc ? ` <small>-${disc}%</small>` : ''}</span></label>`;
   return `<h2>${b ? t('edit_booking') : walk ? t('walk_in') : t('new_booking')}</h2>
-    <form data-form="booking" class="stack">
+    <form data-form="booking" class="stack bk-form">
       <input type="hidden" name="id" value="${b?.id ?? ''}">
       <input type="hidden" name="walk" value="${walk ? '1' : ''}">
-      <div class="grid2">
-        <label>${t('name')}<input name="guest_name" value="${esc(b?.guest_name)}" ${walk ? '' : 'required'} maxlength="80"></label>
-        ${walk ? '' : `<label>${t('phone')}<input name="phone" type="tel" inputmode="tel" value="${esc(b?.phone)}" required maxlength="30" data-input="phone"></label>`}
-        <label>${t('guests')}<input name="party_size" type="number" min="1" max="200" value="${b?.party_size ?? 2}" required></label>
-        ${opts.walkIn ? '' : `<label>${t('time')}<select name="time" data-change="bk-time">${times.map((x) =>
-          `<option ${x === time ? 'selected' : ''}>${x}</option>`).join('')}</select></label>`}
-        <label>${t('duration_min')}<input name="duration_min" type="number" min="15" max="720" step="15" value="${b?.duration_min ?? S.settings.default_duration_min}" required></label>
+      <fieldset class="blk">
+        <legend>${t('sec_who')}</legend>
+        <div class="grid2">
+          ${walk ? '' : `<label>${t('phone')}<input name="phone" type="tel" inputmode="tel" value="${esc(b?.phone)}" required maxlength="30" data-input="phone" autocomplete="off"></label>`}
+          <label>${t('name')}<input name="guest_name" value="${esc(b?.guest_name)}" ${walk ? '' : 'required'} maxlength="80" autocomplete="off"></label>
+        </div>
+        <div id="guest-hint"></div>
+        ${cats.length ? `<div class="field-label">${t('category')}</div>
+        <div class="chip-radios" role="radiogroup" aria-label="${t('category')}">${catRadio('', t('cat_none'), '#ACC1C6', 0)}${cats.map((c) => catRadio(c.id, c.name, c.color, c.discount_pct)).join('')}</div>` : ''}
+      </fieldset>
+      <fieldset class="blk">
+        <legend>${t('sec_when')}</legend>
+        <div class="grid2">
+          ${opts.walkIn ? '' : `<label>${t('time')}<select name="time" data-change="bk-time">${times.map((x) =>
+            `<option ${x === time ? 'selected' : ''}>${x}</option>`).join('')}</select></label>`}
+          <div class="stepper-field"><span class="field-label">${t('guests')}</span>
+            <div class="stepper">
+              <button type="button" class="icon step" data-action="step" data-d="-1" aria-label="${t('decrease')}">${ICON.minus}</button>
+              <input name="party_size" type="number" inputmode="numeric" min="1" max="200" value="${b?.party_size ?? tableById(tableId)?.seats ?? 2}" required aria-label="${t('guests')}">
+              <button type="button" class="icon step" data-action="step" data-d="1" aria-label="${t('increase')}">${ICON.plusB}</button>
+            </div>
+          </div>
+          ${wholeNight() ? '' : `<label>${t('duration_min')}<input name="duration_min" type="number" min="15" max="720" step="15" value="${b?.duration_min ?? S.settings.default_duration_min}" required></label>`}
+        </div>
+      </fieldset>
+      <fieldset class="blk">
+        <legend>${t('sec_where')}</legend>
         <label>${t('table')}<select name="table_id">${tableOptions(tables, tableId, busy)}</select></label>
-      </div>
-      <div id="guest-hint"></div>
-      <details class="extra-tables" ${b?.extra_table_ids?.length ? 'open' : ''}>
-        <summary>${t('combine_tables')}${b?.extra_table_ids?.length ? ` (${b.extra_table_ids.length})` : ''}</summary>
-        <div class="check-grid">${tables.map((x) => `<label class="check"><input type="checkbox" name="extra" value="${x.id}" ${b?.extra_table_ids?.includes(x.id) ? 'checked' : ''}>
-          ${esc(x.label)}${busy(x) ? ` <span class="muted">· ${t('taken')}</span>` : ''}</label>`).join('')}</div>
-      </details>
+        <details class="extra-tables" ${b?.extra_table_ids?.length ? 'open' : ''}>
+          <summary>${ICON.plus} ${t('combine_tables')}${b?.extra_table_ids?.length ? ` (${b.extra_table_ids.length})` : ''}</summary>
+          <div class="check-grid">${tables.map((x) => `<label class="check"><input type="checkbox" name="extra" value="${x.id}" ${b?.extra_table_ids?.includes(x.id) ? 'checked' : ''}>
+            ${esc(x.label)}${busy(x) ? ` <span class="muted">· ${t('taken')}</span>` : ''}</label>`).join('')}</div>
+        </details>
+        ${priced && b ? `<label>${t('sold_price')}<input name="sold_price" type="number" inputmode="numeric" min="0" step="1" value="${b.sold_price ?? ''}" placeholder="${netPriceOf({ ...b, sold_price: null }, tableById, categoryById(b.category_id))}"><span class="hint">${t('sold_price_help')}</span></label>` : ''}
+      </fieldset>
+      ${priced && !b && !walk ? `<fieldset class="blk">
+        <legend>${t('pay_status')}</legend>
+        <div class="chip-radios pay-radios" role="radiogroup" aria-label="${t('pay_status')}">${PAY_STATUSES.map((st) =>
+          `<label class="chip-radio ps-${st}"><input type="radio" name="pay_status" value="${st}" ${st === 'unpaid' ? 'checked' : ''}><span>${PAY_ICON[st]}${t('ps_' + st)}</span></label>`).join('')}</div>
+      </fieldset>` : ''}
       <label>${t('note')}<textarea name="note" rows="2" maxlength="500">${esc(b?.note)}</textarea></label>
       <div id="warnings"></div>
-      <button class="primary" type="submit">${t('save')}</button>
+      <button class="primary big" type="submit">${t('save_booking')}</button>
     </form>`;
 }
 
@@ -1062,28 +1213,34 @@ async function saveBooking(form, confirmed) {
   const existing = f.id ? S.bookings.find((b) => b.id === f.id) : null;
   const startMs = existing && !f.time ? T.startMs(existing)
     : f.time ? T.nightTimeToMs(S.night, f.time, S.settings) : Date.now();
+  const start_at = new Date(startMs).toISOString();
   const draft = {
     id: f.id || undefined,
     table_id: f.table_id,
-    start_at: new Date(startMs).toISOString(),
-    duration_min: Number(f.duration_min),
+    start_at,
+    // Whole-night mode: the booking holds the table until closing.
+    duration_min: wholeNight() ? T.minutesToClose(S.night, start_at, S.settings) : Number(f.duration_min),
     party_size: Number(f.party_size),
     guest_name: (f.guest_name ?? '').trim(),
     phone: (f.phone ?? '').trim(),
     note: (f.note ?? '').trim(),
     extra_table_ids: fd.getAll('extra').filter((x) => x !== f.table_id),
   };
+  if ('category_id' in f) draft.category_id = f.category_id || null;
+  if ('sold_price' in f) draft.sold_price = f.sold_price === '' ? null : Math.round(Number(f.sold_price));
+  if (!existing && f.pay_status) draft.pay_status = f.pay_status;
   if (!confirmed) {
     const warns = [];
-    for (const c of T.conflictsFor(draft, S.bookings)) {
+    for (const c of T.conflictsFor(draft, S.bookings, TOPTS())) {
       warns.push(t('warn_overlap').replace('{name}', c.guest_name || t('walk_in'))
-        .replace('{from}', hhmm(c.start_at)).replace('{to}', T.bkkParts(T.endMs(c)).hhmm));
+        .replace('{from}', hhmm(c.start_at)).replace('{to}', wholeNight() ? t('until_close') : T.bkkParts(T.endMs(c)).hhmm));
     }
     const seats = T.tablesOf(draft).reduce((n, id) => n + (tableById(id)?.seats ?? 0), 0);
     if (seats && draft.party_size > seats) warns.push(t('warn_seats').replace('{n}', seats));
     if (warns.length) {
       $('#warnings').innerHTML = `<div class="warn">${ICON.warn}<div>${warns.map((w) => `<div>${esc(w)}</div>`).join('')}
         <button type="button" class="primary small" data-action="confirm-save">${t('save_anyway')}</button></div></div>`;
+      $('#warnings').scrollIntoView({ block: 'nearest' });
       return;
     }
   }
@@ -1094,7 +1251,7 @@ async function saveBooking(form, confirmed) {
     } else {
       delete draft.id;
       await run(sb.from('bookings').insert(walk ? { ...draft, is_walk_in: true, status: 'seated' } : draft), 'booking.insert');
-      log.info('booking.created', { walk_in: walk, tables: T.tablesOf(draft).length, party: draft.party_size });
+      log.info('booking.created', { walk_in: walk, tables: T.tablesOf(draft).length, party: draft.party_size, pay: draft.pay_status ?? 'unpaid' });
     }
     closeModal();
     toast(t('saved'));
@@ -1103,36 +1260,42 @@ async function saveBooking(form, confirmed) {
 }
 
 // ───────── Booking detail ─────────
+// One sheet, top to bottom in the order staff need it: who/where → guest status → payment → wristband → extras.
 let openBookingId = null;
+const STEPS = ['booked', 'seated', 'done'];
 async function openBooking(id) {
   const b = S.bookings.find((x) => x.id === id);
   if (!b) return;
   openBookingId = id;
-  const next = T.NEXT_STATUS[b.status];
-  const label = { seated: t('act_seat'), cancelled: t('act_cancel'), no_show: t('act_noshow'), done: t('act_done') };
   const late = isTonight() && T.isLate(b, Date.now());
-  openModal(`<div data-booking="${b.id}">
-    <h2>${esc(b.guest_name || t('walk_in'))} <span class="pill st-${late ? 'late' : b.status}">${late ? t('late') : t('st_' + b.status)}</span>
-      ${b.confirmed_at ? `<span class="pill paid">${t('confirmed')}</span>` : ''}</h2>
-    <dl class="facts">
-      <dt>${t('time')}</dt><dd>${fmtNight(b.night)} · ${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}</dd>
-      <dt>${t('table')}</dt><dd>${esc(tablesLabel(b))} · ${t('floor')} ${tableById(b.table_id)?.floor ?? ''}</dd>
-      <dt>${t('guests')}</dt><dd>${b.party_size}</dd>
-      ${b.phone ? `<dt>${t('phone')}</dt><dd><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a></dd>` : ''}
-      ${b.note ? `<dt>${t('note')}</dt><dd>${esc(b.note)}</dd>` : ''}
-      <dt>${t('created_by')}</dt><dd>${esc(personName(b.created_by))}</dd>
-    </dl>
-    <div class="row wrap">
-      ${next.map((s) => `<button class="${s === 'seated' || s === 'done' ? 'primary' : 'ghost danger'}" data-action="set-status" data-id="${b.id}" data-s="${s}">${label[s]}</button>`).join('')}
-      ${T.isActive(b) ? `<button class="ghost" data-action="edit-booking" data-id="${b.id}">${t('edit')}</button>
-        <button class="ghost" data-action="move-start" data-id="${b.id}">${t('move_table')}</button>` : ''}
+  const tb = tableById(b.table_id);
+  const timeText = wholeNight() ? hhmm(b.start_at) : `${hhmm(b.start_at)}–${T.bkkParts(T.endMs(b)).hhmm}`;
+  openModal(`<div data-booking="${b.id}" class="bk-detail">
+    <header class="bk-head">
+      <div class="bk-table" aria-label="${t('table')}">${esc(tablesLabel(b))}</div>
+      <div class="grow">
+        <h2>${esc(b.guest_name || t('walk_in'))}</h2>
+        <div class="bk-meta">${fmtNight(b.night)} · ${timeText} · ${ICON.person} ${b.party_size} · ${t('floor')} ${tb?.floor ?? ''} ${catChip(b)}
+          ${late ? `<span class="pill st-late">${t('late')}</span>` : ''}</div>
+      </div>
+    </header>
+    <div class="row wrap quick">
+      ${b.phone ? `<a class="btn" href="tel:${esc(b.phone)}">${ICON.phone} ${esc(b.phone)}</a>` : ''}
+      ${T.isActive(b) ? `<button class="ghost" data-action="edit-booking" data-id="${b.id}">${ICON.edit} ${t('edit')}</button>
+        <button class="ghost" data-action="move-start" data-id="${b.id}">${ICON.arrow} ${t('move_table')}</button>` : ''}
     </div>
-    ${b.guest ? guestSection(b) : ''}
-    ${b.phone && T.isActive(b) ? messageSection(b) : ''}
+    ${b.note ? `<p class="bk-note">${esc(b.note)}</p>` : ''}
+    ${statusSection(b)}
     ${paymentSection(b)}
+    ${wristbandSection(b)}
+    ${b.phone && T.isActive(b) ? messageSection(b) : ''}
     ${itemsSection(b)}
-    <h3>${t('history')}</h3>
-    <div id="history" class="muted">${t('loading')}</div>
+    <details class="blk fold" data-fold="history">
+      <summary>${t('history')} ${ICON.chev}</summary>
+      ${b.guest ? `<p id="guest-stats" class="muted small-text"></p>` : ''}
+      <p class="muted small-text">${t('created_by')}: ${esc(personName(b.created_by))}</p>
+      <div id="history" class="muted">${t('loading')}</div>
+    </details>
   </div>`);
   loadSlips(b);
   loadGuestStats(b);
@@ -1142,22 +1305,46 @@ async function openBooking(id) {
     if (el) el.innerHTML = rows.map(historyRow).join('') || '—';
   } catch (e) { toast(errMsg(e), true); }
 }
+
+// Guest status as a 3-step track with one big button for the next step.
+function statusSection(b) {
+  const closed = ['cancelled', 'no_show'].includes(b.status);
+  const at = STEPS.indexOf(b.status);
+  const track = `<ol class="steps" aria-label="${t('status_title')}">${STEPS.map((st, i) =>
+    `<li class="${closed ? '' : i < at ? 'past' : i === at ? 'now' : ''}" ${i === at && !closed ? 'aria-current="step"' : ''}><i>${i < at ? ICON.check : i + 1}</i><span>${t('step_' + st)}</span></li>`).join('')}</ol>`;
+  let actions = '';
+  if (b.status === 'booked') {
+    actions = `<button class="primary big" data-action="set-status" data-id="${b.id}" data-s="seated">${ICON.check} ${t('act_seat')}</button>
+      <div class="row minor">
+        <button class="ghost small danger" data-action="set-status" data-id="${b.id}" data-s="no_show">${t('act_noshow')}</button>
+        <button class="ghost small danger" data-action="set-status" data-id="${b.id}" data-s="cancelled">${t('act_cancel')}</button>
+      </div>`;
+  } else if (b.status === 'seated') {
+    actions = `<button class="primary big" data-action="set-status" data-id="${b.id}" data-s="done">${t('act_done_big')}</button>`;
+  } else if (closed) {
+    actions = `<p class="closed-as">${t('closed_as').replace('{s}', t('st_' + b.status))}</p>`;
+  }
+  return `<section class="blk status-blk">
+    <h3>${t('status_title')}</h3>
+    ${closed ? '' : track}
+    ${actions}
+  </section>`;
+}
+
 // Re-draw an open booking after realtime changes (keeps the sheet in sync with other devices).
 function refreshOpenBooking() {
   const el = $('#modal [data-booking]');
-  if (el && openBookingId && S.bookings.some((b) => b.id === openBookingId)) openBooking(openBookingId);
+  if (el && openBookingId && S.bookings.some((b) => b.id === openBookingId)) {
+    const open = [...el.querySelectorAll('details[data-fold][open]')].map((d) => d.dataset.fold);
+    openBooking(openBookingId);
+    for (const k of open) $(`#modal details[data-fold="${k}"]`)?.setAttribute('open', '');
+  }
 }
-async function reopen(id) { await loadNight(); render(); openBooking(id); }
+async function reopen(id, fold) {
+  await loadNight(); render(); await openBooking(id);
+  if (fold) $(`#modal details[data-fold="${fold}"]`)?.setAttribute('open', '');
+}
 
-// Guest card: tags + visit history.
-const GUEST_TAGS = ['vip', 'regular', 'birthday', 'caution'];
-function guestSection(b) {
-  const g = b.guest;
-  return `<div class="card guest-card">
-    <div class="row between wrap"><b>${t('guest')}</b><span id="guest-stats" class="muted small-text"></span></div>
-    <div class="row wrap tag-row">${GUEST_TAGS.map((k) => `<button class="tag-toggle ${g.tags.includes(k) ? 'on' : ''}" data-action="guest-tag" data-gid="${g.id}" data-tag="${k}" aria-pressed="${g.tags.includes(k)}">${k === 'vip' ? STAR : ''}${t('tag_' + k)}</button>`).join('')}</div>
-  </div>`;
-}
 async function loadGuestStats(b) {
   if (!b.guest) return;
   try {
@@ -1169,24 +1356,22 @@ async function loadGuestStats(b) {
 
 // LINE messages: the app prepares the text; staff send it in LINE themselves.
 function messageSection(b) {
-  return `<div class="card msg-card">
-    <div class="row between wrap">
-      <b>${t('messages')}</b>
-      <span class="muted small-text">${b.confirmed_at ? t('confirmed_at').replace('{t}', stamp(b.confirmed_at))
-        : b.reminded_at ? t('reminded_at').replace('{t}', stamp(b.reminded_at)) : t('not_reminded')}</span>
-    </div>
+  const status = b.confirmed_at ? t('confirmed_at').replace('{t}', stamp(b.confirmed_at))
+    : b.reminded_at ? t('reminded_at').replace('{t}', stamp(b.reminded_at)) : t('not_reminded');
+  return `<details class="blk fold msg-card" data-fold="messages">
+    <summary>${ICON.send} ${t('messages')} <span class="muted small-text">${status}</span> ${ICON.chev}</summary>
     <div class="row wrap">
       <button class="small" data-action="share" data-id="${b.id}" data-kind="confirm">${ICON.send} ${t('send_confirm')}</button>
       <button class="small" data-action="share" data-id="${b.id}" data-kind="reminder">${ICON.send} ${t('send_reminder')}</button>
       ${b.confirmed_at ? `<button class="ghost small" data-action="mark-confirmed" data-id="${b.id}" data-v="0">${t('undo_confirm')}</button>`
         : `<button class="ghost small" data-action="mark-confirmed" data-id="${b.id}" data-v="1">${t('guest_confirmed')}</button>`}
     </div>
-  </div>`;
+  </details>`;
 }
 const stamp = (iso) => { const p = T.bkkParts(Date.parse(iso)); return `${fmtNight(p.date)} ${p.hhmm}`; };
 function messageText(b, kind) {
   const s = S.settings;
-  const due = dueOfB(b), paid = paidOfB(b);
+  const due = dueOfB(b), paid = receivedOfB(b);
   return fill(kind === 'confirm' ? s.confirm_template : s.reminder_template, {
     name: b.guest_name, shop: s.shop_name, table: tablesLabel(b), date: fmtNight(b.night),
     time: hhmm(b.start_at), guests: b.party_size, payment: paymentLine(due, paid, getLang()),
@@ -1213,35 +1398,64 @@ function openShare(id, kind) {
   log.info('share.open', { kind, booking: id });
 }
 
-// Payments: deposits, partial and full, each with an optional slip photo.
+// Payment: five big status buttons (one tap), the amounts, and an optional record of money/slips.
 function paymentSection(b) {
-  const due = dueOfB(b), paid = paidOfB(b), left = Math.max(0, due - paid);
-  const st = payState(due, paid);
+  const cat = categoryById(b.category_id);
+  const list = listPriceOf(b, tableById), net = netPriceOf(b, tableById, cat);
+  const extras = (b.booking_items ?? []).reduce((n, i) => n + i.unit_price * i.qty, 0);
+  const due = net + extras, paid = paidOfB(b), left = Math.max(0, due - paid);
+  const st = payOf(b);
   const pays = [...(b.booking_payments ?? [])].sort((x, y) => x.created_at.localeCompare(y.created_at));
-  return `<div class="pay-box is-${st}">
-    <div class="row between wrap">
-      <div>
-        <div class="muted small-text">${t('payment')}</div>
-        <div class="pay-amount">${due ? baht(due) : '—'} ${payPill(b) || ''}</div>
-        ${due ? `<div class="muted small-text">${t('paid_so_far')} ${baht(paid)} · ${t('remaining')} <b class="${left ? 'c-owed' : ''}">${baht(left)}</b></div>` : ''}
-      </div>
-    </div>
+  const money = [];
+  if (list) money.push([t('list_price'), baht(list)]);
+  if (list && net !== list) money.push([b.sold_price != null ? t('sold_price') : `${t('discount')} ${esc(cat?.name ?? '')} ${cat?.discount_pct ?? 0}%`, b.sold_price != null ? baht(net) : `−${baht(list - net)}`]);
+  if (extras) money.push([t('extras'), baht(extras)]);
+  return `<section class="blk pay-blk is-${st}">
+    <div class="row between"><h3>${t('pay_status')}</h3><span class="muted small-text">${t('ps_help')}</span></div>
+    <div class="pay-grid" role="radiogroup" aria-label="${t('pay_status')}">${PAY_STATUSES.map((p) =>
+      `<button class="pay-tile ps-${p} ${p === st ? 'on' : ''}" role="radio" aria-checked="${p === st}" data-action="set-pay" data-id="${b.id}" data-s="${p}">${PAY_ICON[p]}<span>${t('ps_' + p)}</span></button>`).join('')}</div>
+    ${due || paid ? `<dl class="money">
+      ${money.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}
+      <dt><b>${t('to_pay')}</b></dt><dd><b>${baht(due)}</b></dd>
+      ${paid ? `<dt>${t('paid_so_far')}</dt><dd>${baht(paid)}</dd>` : ''}
+      ${paid && st !== 'paid' ? `<dt>${t('remaining')}</dt><dd class="${left ? 'c-owed' : ''}"><b>${baht(left)}</b></dd>` : ''}
+    </dl>` : ''}
     ${pays.length ? `<div class="pay-list">${pays.map((p) => `<div class="pay-row">
       <span class="grow"><b>${baht(p.amount)}</b> · ${t('m_' + p.method)}
         <span class="muted small-text pay-meta">${esc(personName(p.created_by))} · ${stamp(p.created_at)}</span></span>
       ${p.slip_path ? `<a class="slip-thumb" data-slip="${esc(p.slip_path)}" target="_blank" rel="noopener"><img alt="${t('slip')}"></a>` : ''}
       ${isManager() ? `<button class="icon small-icon" data-action="pay-delete" data-id="${p.id}" data-bid="${b.id}" aria-label="${t('delete')}">${ICON.close}</button>` : ''}
     </div>`).join('')}</div>` : ''}
-    <form data-form="payment" class="pay-form">
-      <input type="hidden" name="booking_id" value="${b.id}">
-      <label>${t('amount')}<input name="amount" type="number" inputmode="numeric" min="1" step="1" value="${left || ''}" required></label>
-      <label>${t('method')}<select name="method">
-        <option value="transfer">${t('m_transfer')}</option><option value="cash">${t('m_cash')}</option><option value="card">${t('m_card')}</option>
-      </select></label>
-      <label class="btn-file">${ICON.camera}<span id="slip-name">${t('attach_slip')}</span><input type="file" name="slip" accept="image/*" data-change="slip-pick"></label>
-      <button class="primary" type="submit">${t('record_payment')}</button>
-    </form>
-  </div>`;
+    <details class="fold" data-fold="record">
+      <summary>${ICON.camera} ${t('record_money')} ${ICON.chev}</summary>
+      <form data-form="payment" class="pay-form">
+        <input type="hidden" name="booking_id" value="${b.id}">
+        <label>${t('amount')}<input name="amount" type="number" inputmode="numeric" min="1" step="1" value="${left || ''}" required></label>
+        <label>${t('method')}<select name="method">
+          <option value="transfer">${t('m_transfer')}</option><option value="cash">${t('m_cash')}</option><option value="card">${t('m_card')}</option>
+        </select></label>
+        <label class="btn-file">${ICON.camera}<span id="slip-name">${t('attach_slip')}</span><input type="file" name="slip" accept="image/*" data-change="slip-pick"></label>
+        <button class="primary" type="submit">${t('record_payment')}</button>
+      </form>
+    </details>
+  </section>`;
+}
+
+// Concert wristband: one big toggle, with the set drinks that come with the table.
+function wristbandSection(b) {
+  const tbs = T.tablesOf(b).map(tableById).filter(Boolean);
+  const sets = tbs.map((x) => x.set_note).filter(Boolean);
+  if (!isConcertLayout(nightLayoutId()) && !b.wristband_at && !sets.length) return '';
+  const on = !!b.wristband_at;
+  return `<section class="blk wb-blk ${on ? 'on' : ''}">
+    <div class="row between wrap">
+      <div><h3>${ICON.wristband} ${t('wristband')}</h3>
+        ${sets.length ? `<div class="muted small-text">${t('set_drinks')}: <b class="c-text">${esc(sets.join(' + '))}</b></div>` : ''}</div>
+      <button class="${on ? 'ghost' : 'primary'} wb-toggle" data-action="wristband" data-id="${b.id}" data-v="${on ? 0 : 1}" aria-pressed="${on}">
+        ${on ? `${ICON.check} ${t('wb_given')}` : t('wb_give')}</button>
+    </div>
+    ${on ? `<div class="muted small-text">${stamp(b.wristband_at)} · ${esc(personName(b.wristband_by))}</div>` : `<div class="muted small-text">${t('wb_not')}</div>`}
+  </section>`;
 }
 async function loadSlips() {
   for (const a of document.querySelectorAll('#modal [data-slip]')) {
@@ -1290,7 +1504,7 @@ async function savePayment(form) {
     await run(sb.from('booking_payments').insert({ booking_id: id, amount, method: v.method, slip_path }), 'payment.insert');
     log.info('payment.recorded', { booking: id, amount, method: v.method, slip: !!slip_path });
     toast(t('saved'));
-    await reopen(id);
+    await reopen(id, 'record');
   } catch (e) { btn.disabled = false; toast(errMsg(e), true); }
 }
 
@@ -1298,8 +1512,8 @@ async function savePayment(form) {
 function itemsSection(b) {
   const items = b.booking_items ?? [];
   const products = (S.products ?? []).filter((p) => p.active);
-  return `<div class="card items-card">
-    <b>${t('extras')}</b>
+  return `<details class="blk fold items-card" data-fold="items" ${items.length ? 'open' : ''}>
+    <summary>${ICON.plus} ${t('extras')}${items.length ? ` (${items.length})` : ''} ${ICON.chev}</summary>
     ${items.length ? `<div class="pay-list">${items.map((i) => `<div class="pay-row">
       <span class="grow">${esc(i.name)} × ${i.qty}</span><span><b>${baht(i.unit_price * i.qty)}</b></span>
       <button class="icon small-icon" data-action="item-delete" data-id="${i.id}" data-bid="${b.id}" aria-label="${t('delete')}">${ICON.close}</button>
@@ -1311,7 +1525,7 @@ function itemsSection(b) {
       <label>${t('qty')}<input name="qty" type="number" min="1" max="500" value="${products[0]?.per_person ? b.party_size : 1}" required></label>
       <button type="submit">${ICON.plus} ${t('add')}</button>
     </form>` : `<p class="muted small-text">${t('no_products')}</p>`}
-  </div>`;
+  </details>`;
 }
 async function saveItem(form) {
   const v = Object.fromEntries(new FormData(form));
@@ -1320,7 +1534,7 @@ async function saveItem(form) {
   try {
     await run(sb.from('booking_items').insert({ booking_id: v.booking_id, product_id: p.id, name: p.name, unit_price: p.price, qty: Number(v.qty) }), 'item.insert');
     log.info('item.added', { booking: v.booking_id, product: p.id, qty: Number(v.qty) });
-    await reopen(v.booking_id);
+    await reopen(v.booking_id, 'items');
   } catch (e) { toast(errMsg(e), true); }
 }
 
@@ -1340,7 +1554,7 @@ async function finishMove(tableId) {
   S.moving = null;
   if (!b || tableId === b.table_id) return render();
   const draft = { ...b, table_id: tableId, extra_table_ids: (b.extra_table_ids ?? []).filter((x) => x !== tableId) };
-  const clash = T.conflictsFor(draft, S.bookings);
+  const clash = T.conflictsFor(draft, S.bookings, TOPTS());
   if (clash.length && !confirm(t('move_clash').replace('{name}', clash[0].guest_name || t('walk_in')).replace('{time}', hhmm(clash[0].start_at)))) return render();
   try {
     await run(sb.from('bookings').update({ table_id: draft.table_id, extra_table_ids: draft.extra_table_ids }).eq('id', b.id), 'booking.move');
@@ -1359,7 +1573,7 @@ function addNote(kind, text, bookingId) {
   S.notes = [{ id: key, at: Date.now(), kind, text, bookingId, read: false }, ...(S.notes ?? [])].slice(0, 50);
   toast(text);
   if (deviceNotify() && document.visibilityState !== 'visible') {
-    try { new Notification('Music Table', { body: text, tag: key }); } catch (e) { log.warn('notify.device_failed', e); }
+    try { new Notification('Perfect Strangers', { body: text, tag: key }); } catch (e) { log.warn('notify.device_failed', e); }
   }
   updateBell();
 }
@@ -1412,13 +1626,15 @@ function openNotes() {
   updateBell();
 }
 
-const FIELDS = ['status', 'paid', 'slip_path', 'table_id', 'start_at', 'duration_min', 'party_size', 'guest_name', 'phone', 'note'];
+const FIELDS = ['status', 'pay_status', 'wristband_at', 'category_id', 'sold_price', 'table_id', 'start_at', 'party_size', 'guest_name', 'phone', 'note'];
 function fmtField(k, v) {
   if (k === 'status') return t('st_' + v);
   if (k === 'table_id') return tableById(v)?.label ?? '—';
   if (k === 'start_at') return hhmm(v);
-  if (k === 'paid') return v ? t('paid') : t('unpaid');
-  if (k === 'slip_path') return v ? t('slip') : '—';
+  if (k === 'pay_status') return t('ps_' + (v ?? 'unpaid'));
+  if (k === 'wristband_at') return v ? t('wb_given') : t('wb_not');
+  if (k === 'category_id') return categoryById(v)?.name ?? t('cat_none');
+  if (k === 'sold_price') return v == null ? '—' : baht(v);
   return v === '' || v == null ? '—' : String(v);
 }
 function historyRow(h) {
@@ -1496,31 +1712,55 @@ const actions = {
   async 'mark-reminded'(el) {
     try {
       await run(sb.from('bookings').update({ reminded_at: new Date().toISOString() }).eq('id', el.dataset.id), 'booking.reminded');
-      toast(t('saved')); await reopen(el.dataset.id);
+      toast(t('saved')); await reopen(el.dataset.id, 'messages');
     } catch (e) { toast(errMsg(e), true); }
   },
   'back-to-booking'(el) { openBooking(el.dataset.id); },
   async 'mark-confirmed'(el) {
     try {
       await run(sb.from('bookings').update({ confirmed_at: el.dataset.v === '1' ? new Date().toISOString() : null }).eq('id', el.dataset.id), 'booking.confirmed');
-      await reopen(el.dataset.id);
+      await reopen(el.dataset.id, 'messages');
     } catch (e) { toast(errMsg(e), true); }
   },
-  async 'guest-tag'(el) {
-    const b = S.bookings.find((x) => x.guest?.id === el.dataset.gid);
-    if (!b) return;
-    const tags = new Set(b.guest.tags);
-    tags.has(el.dataset.tag) ? tags.delete(el.dataset.tag) : tags.add(el.dataset.tag);
-    try { await run(sb.from('guests').update({ tags: [...tags] }).eq('id', el.dataset.gid), 'guest.tags'); await reopen(b.id); }
-    catch (e) { toast(errMsg(e), true); }
+  async 'set-pay'(el) {
+    const id = el.dataset.id, st = el.dataset.s;
+    const b = S.bookings.find((x) => x.id === id);
+    if (!b || payOf(b) === st) return;
+    try {
+      await run(sb.from('bookings').update({ pay_status: st }).eq('id', id), 'booking.pay_status');
+      log.info('payment.status', { booking: id, from: payOf(b), to: st });
+      toast(`${t('pay_status')}: ${t('ps_' + st)}`);
+      await reopen(id);
+    } catch (e) { toast(errMsg(e), true); }
   },
+  async wristband(el) {
+    const id = el.dataset.id, on = el.dataset.v === '1';
+    try {
+      await run(sb.from('bookings').update({ wristband_at: on ? new Date().toISOString() : null }).eq('id', id), 'booking.wristband');
+      log.info('wristband.' + (on ? 'given' : 'undone'), { booking: id });
+      if (el.dataset.from === 'report') { await loadNight(); render(); } else await reopen(id);
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  step(el) {
+    const input = el.closest('.stepper').querySelector('input');
+    input.value = Math.min(Number(input.max) || 200, Math.max(Number(input.min) || 1, (Number(input.value) || 0) + Number(el.dataset.d)));
+  },
+  noop() {},
+  'pick-layout'() {
+    openModal(`<h2>${t('pick_night_layout')}</h2>
+      <p class="muted small-text">${fmtNight(S.night)}</p>
+      <div class="menu-list">${S.layouts.map((l) => `<button class="menu-item ${l.id === nightLayoutId() ? 'on' : ''}" data-action="choose-layout" data-id="${l.id}" aria-pressed="${l.id === nightLayoutId()}">
+        ${isConcertLayout(l.id) ? ICON.ticket : ICON.map}<span class="grow">${esc(l.name)}${l.is_default ? ` <small class="muted">(${t('default')})</small>` : ''}</span>${l.id === nightLayoutId() ? ICON.check : ''}</button>`).join('')}</div>`);
+  },
+  'choose-layout'(el) { if (el.dataset.id === nightLayoutId()) return closeModal(); closeModal(); changeNightLayout(el.dataset.id); },
+  excel() { return downloadConcertExcel(); },
   async 'pay-delete'(el) {
     if (!confirm(t('confirm_delete_payment'))) return;
     try { await run(sb.from('booking_payments').delete().eq('id', el.dataset.id), 'payment.delete'); log.warn('payment.deleted', { payment: el.dataset.id, booking: el.dataset.bid }); await reopen(el.dataset.bid); }
     catch (e) { toast(errMsg(e), true); }
   },
   async 'item-delete'(el) {
-    try { await run(sb.from('booking_items').delete().eq('id', el.dataset.id), 'item.delete'); await reopen(el.dataset.bid); }
+    try { await run(sb.from('booking_items').delete().eq('id', el.dataset.id), 'item.delete'); await reopen(el.dataset.bid, 'items'); }
     catch (e) { toast(errMsg(e), true); }
   },
   'move-start'(el) { startMove(el.dataset.id); },
@@ -1643,17 +1883,17 @@ const changes = {
   at(el) { S.at = el.value; render(); },
   'bk-time'(el) {
     const form = el.form, sel = form.table_id, id = form.id.value || undefined;
-    const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, el.value, S.settings)).toISOString(), duration_min: Number(form.duration_min.value) || 120, id };
-    const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings).length > 0;
+    const draftAt = { start_at: new Date(T.nightTimeToMs(S.night, el.value, S.settings)).toISOString(), duration_min: Number(form.duration_min?.value) || S.settings.default_duration_min, id };
+    const busy = (x) => T.conflictsFor({ ...draftAt, table_id: x.id }, S.bookings, TOPTS()).length > 0;
     sel.innerHTML = tableOptions(tablesOf(nightLayoutId()), sel.value, busy);
   },
+  mode(el) { const d = el.form.querySelector('.duration-field'); if (d) d.hidden = el.value !== 'timed'; },
   'slip-pick'(el) { const f = el.files?.[0]; const n = $('#slip-name'); if (n) n.textContent = f ? f.name.slice(0, 24) : t('attach_slip'); },
   'product-pick'(el) {
     const per = el.selectedOptions[0]?.dataset.pp === '1';
     const b = S.bookings.find((x) => x.id === el.form.booking_id.value);
     el.form.qty.value = per && b ? b.party_size : 1;
   },
-  'night-layout'(el) { changeNightLayout(el.value); },
   'add-element'(el) { const k = el.value; el.value = ''; if (k) addItem(k); },
   'edit-layout'(el) { if (!confirmLeaveEdit()) { el.value = S.editLayoutId; return; } S.editLayoutId = el.value; S.selTable = null; render(); },
   async 'staff-role'(el) {
@@ -1678,7 +1918,7 @@ async function lookupGuest(input) {
     const st = await run(sb.from('guest_stats').select('*').eq('guest_id', g.id).maybeSingle(), 'guest.stats');
     const nameInput = input.form?.guest_name;
     if (nameInput && !nameInput.value.trim() && g.name) nameInput.value = g.name;
-    hint.innerHTML = `<div class="guest-hint ${st?.no_shows ? 'warn-soft' : ''}"><b>${t('returning_guest')}</b> ${esc(g.name)} ${tagPills(g.tags)}
+    hint.innerHTML = `<div class="guest-hint ${st?.no_shows ? 'warn-soft' : ''}"><b>${t('returning_guest')}</b> ${esc(g.name)}
       <span class="muted small-text">${t('guest_stats').replace('{v}', st?.visits ?? 0).replace('{n}', st?.no_shows ?? 0)}</span></div>`;
   } catch { hint.innerHTML = ''; }
 }
@@ -1707,6 +1947,15 @@ const forms = {
     const v = Object.fromEntries(new FormData(f));
     try { await run(sb.from('settings').update({ shop_name: v.shop_name.trim(), confirm_template: v.confirm_template, reminder_template: v.reminder_template }).eq('id', 1), 'settings.messages'); toast(t('saved')); await reload(); }
     catch (e) { toast(errMsg(e), true); }
+  },
+  async category(f) {
+    const v = Object.fromEntries(new FormData(f));
+    const row = { name: v.name.trim(), color: v.color, discount_pct: Math.max(0, Math.min(100, Number(v.discount_pct) || 0)), active: !!v.active };
+    try {
+      if (v.id) await run(sb.from('categories').update(row).eq('id', v.id), 'category.update');
+      else await run(sb.from('categories').insert({ ...row, sort: (S.categories?.length ?? 0) + 1 }), 'category.insert');
+      toast(t('saved')); await reload();
+    } catch (e) { toast(errMsg(e), true); }
   },
   async product(f) {
     const v = Object.fromEntries(new FormData(f));
@@ -1750,7 +1999,8 @@ const forms = {
   async settings(f) {
     const v = Object.fromEntries(new FormData(f));
     try {
-      await run(sb.from('settings').update({ open_time: v.open_time, close_time: v.close_time, default_duration_min: Number(v.default_duration_min) }).eq('id', 1));
+      await run(sb.from('settings').update({ open_time: v.open_time, close_time: v.close_time, booking_mode: v.booking_mode, default_duration_min: Number(v.default_duration_min) }).eq('id', 1), 'settings.hours');
+      log.info('settings.booking_mode', { mode: v.booking_mode });
       toast(t('saved')); await reload();
     } catch (e) { toast(errMsg(e), true); }
   },

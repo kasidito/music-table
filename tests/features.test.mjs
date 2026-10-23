@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import ExcelJS from '../tools/node_modules/exceljs/excel.js';
 
 const ROOT = path.resolve(import.meta.dirname, '../app');
 const SHOTS = process.argv[2] ?? '.';
@@ -117,6 +118,27 @@ try {
   assert.ok(csv.includes('G1') && csv.includes('3300'), 'csv rows');
   await page.screenshot({ path: path.join(SHOTS, 'features-reports.png'), fullPage: true });
   step('reports page and CSV export');
+
+  // Concert report: live sheet in table order, wristband from the row, Excel download
+  await page.evaluate(() => { window.__db.tables.find((x) => x.id === 'T1').set_note = 'Monkey 1 ขวด'; });
+  await more('concert');
+  await page.waitForSelector('.xsheet tbody tr');
+  const heads = await page.locator('.xsheet th').allTextContents();
+  assert.deepEqual(heads, ['No.', 'ชื่อผู้จอง', 'เลขโต๊ะ', 'ชั้น', 'จำนวนคน', 'ราคา', 'ราคาที่ขายได้', 'เครื่องดื่มในเซ็ต', 'Remark', 'โปรอื่นๆ', 'Paid?', 'รับริสแบนด์แล้ว?']);
+  const first = await page.locator('.xsheet tbody tr').first().locator('td').allTextContents();
+  assert.equal(first[2], 'T2'); assert.equal(first[3], 'ล่าง'); assert.equal(first[10], 'ยังไม่จ่าย');
+  const wbId = await page.getAttribute('.xsheet tbody tr:first-child [data-action=wristband]', 'data-id');
+  await page.click('.xsheet tbody tr:first-child [data-action=wristband]');
+  await page.waitForFunction((id) => window.__db.bookings.find((b) => b.id === id).wristband_at, wbId);
+  await page.waitForSelector('.xsheet tbody tr:first-child .wb-check.on');
+  const [xl] = await Promise.all([page.waitForEvent('download'), page.click('[data-action=excel]')]);
+  assert.match(xl.suggestedFilename(), /^2026-10-22 Normal\.xlsx$/);
+  const wb = new ExcelJS.Workbook(); await wb.xlsx.load(fs.readFileSync(await xl.path()));
+  const ws = wb.worksheets[0];
+  assert.equal(ws.getCell('A1').value, '22 October 2026 - Normal');
+  assert.equal(ws.getCell('C3').value, 'T2'); assert.equal(ws.getCell('L3').value, '✓');
+  await page.screenshot({ path: path.join(SHOTS, 'features-concert.png'), fullPage: true });
+  step('concert report: sheet columns, wristband tick, Excel download');
 
   // Products: add a package in settings, it appears in the booking extras picker
   await more('settings');

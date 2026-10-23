@@ -43,23 +43,26 @@ select set_night_layout('2030-03-01', (select id from layouts where name = 'Purp
 insert into bookings (table_id, start_at, duration_min, party_size, guest_name, phone)
 select t.id, '2030-03-01 20:00+07', 180, 5, 'Fan', '0811111111' from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.label = 'A1';
 select t_assert((select not paid and paid_at is null from bookings where guest_name = 'Fan'), 'new booking unpaid');
--- Payments are recorded as rows; paid/amount_paid are derived and can't be set directly.
+-- amount_paid comes only from payment rows; paid follows pay_status.
 update bookings set paid = true, amount_paid = 999999 where guest_name = 'Fan';
-select t_assert((select not paid and amount_paid = 0 from bookings where guest_name = 'Fan'), 'paid fields not directly writable');
+select t_assert((select not paid and amount_paid = 0 and pay_status = 'unpaid' from bookings where guest_name = 'Fan'), 'paid/amount_paid not directly writable');
 select t_assert(booking_due((select id from bookings where guest_name = 'Fan')) = 6300, 'due = table price');
 insert into booking_payments (booking_id, amount, slip_path, created_by)
 select id, 2000, id::text || '/slip-1.jpg', '00000000-0000-0000-0000-00000000000b' from bookings where guest_name = 'Fan';
-select t_assert((select not paid and amount_paid = 2000 from bookings where guest_name = 'Fan'), 'deposit = partial');
+select t_assert((select not paid and amount_paid = 2000 and pay_status = 'deposit' from bookings where guest_name = 'Fan'), 'deposit recorded -> status deposit');
 select t_assert((select created_by = '00000000-0000-0000-0000-00000000000a' from booking_payments limit 1), 'created_by cannot be spoofed');
 insert into booking_items (booking_id, name, unit_price, qty) select id, 'Monkey Shoulder', 1990, 1 from bookings where guest_name = 'Fan';
 select t_assert(booking_due((select id from bookings where guest_name = 'Fan')) = 8290, 'due includes items');
 insert into booking_payments (booking_id, amount, method) select id, 6290, 'cash' from bookings where guest_name = 'Fan';
 select t_assert((select paid and amount_paid = 8290 and paid_at is not null and paid_by = '00000000-0000-0000-0000-00000000000a' from bookings where guest_name = 'Fan'), 'fully paid, stamped');
+select t_assert((select pay_status = 'paid' from bookings where guest_name = 'Fan'), 'full amount -> status paid');
 update bookings set note = 'VIP' where guest_name = 'Fan';
 select t_assert((select paid and paid_at is not null from bookings where guest_name = 'Fan'), 'other edits keep paid');
 select t_expect_error($q$insert into booking_payments (booking_id, amount, slip_path) select id, 1, '../x' from bookings where guest_name = 'Fan'$q$, 'slip_path_check');
 delete from booking_payments where method = 'cash';
-select t_assert((select not paid and amount_paid = 2000 and paid_at is null from bookings where guest_name = 'Fan'), 'manager delete payment -> partial again');
+select t_assert((select paid and amount_paid = 2000 from bookings where guest_name = 'Fan'), 'deleting a payment never moves status back');
+update bookings set pay_status = 'deposit' where guest_name = 'Fan';
+select t_assert((select not paid and paid_at is null from bookings where guest_name = 'Fan'), 'staff set status back by hand');
 select t_assert((select count(*) from booking_history h join bookings b on b.id = h.booking_id where b.guest_name = 'Fan' and h.old_row->>'paid' <> h.new_row->>'paid') = 2, 'paid changes in history');
 reset role;
 
@@ -103,13 +106,44 @@ select t_assert((select count(*) from products) = 2, 'seeded products');
 -- night switch remaps extra tables; archive guard covers extras
 update bookings set extra_table_ids = array[(select t.id from tables t join layouts l on l.id = t.layout_id where l.name='Purpeech' and t.label='A5')] where guest_name = 'Fan';
 select t_assert(booking_due((select id from bookings where guest_name = 'Fan')) = 6300 + 5800 + 1990, 'adding extra table updates due');
-select t_assert((select not paid and amount_paid = 2000 from bookings where guest_name = 'Fan'), 'still partial after due grows');
+select t_assert((select not paid and amount_paid = 2000 and pay_status = 'deposit' from bookings where guest_name = 'Fan'), 'still deposit after due grows');
 select t_expect_error($q$update tables set archived = true where id = (select extra_table_ids[1] from bookings where guest_name = 'Fan')$q$, 'table_has_future_bookings');
 select t_expect_error($q$select set_night_layout('2030-03-01', (select id from layouts where name = 'Normal'))$q$, 'unmapped_bookings');
 select set_night_layout('2030-03-01', (select id from layouts where name = 'Normal'), jsonb_build_object(
   (select table_id::text from bookings where guest_name = 'Fan'), (select id from tables where layout_id = (select id from layouts where name='Normal') and label = 'T1'),
   (select extra_table_ids[1]::text from bookings where guest_name = 'Fan'), (select id from tables where layout_id = (select id from layouts where name='Normal') and label = 'T2')));
 select t_assert((select t1.label = 'T1' and t2.label = 'T2' from bookings b join tables t1 on t1.id = b.table_id join tables t2 on t2.id = b.extra_table_ids[1] where b.guest_name = 'Fan'), 'night switch remaps main and extra tables');
+reset role;
+
+
+-- ── 011: pay status, categories, agreed price, wristband, set drinks, booking mode ──
+select t_assert((select booking_mode = 'night' from settings), 'whole-night mode by default');
+select t_assert((select count(*) from categories) = 4 and (select discount_pct from categories where name = 'เพื่อนหุ้นส่วน') = 10, 'categories seeded');
+select t_assert((select bool_and(set_note is not null) from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.kind = 'table'), 'Purpeech set drinks seeded');
+select t_assert((select set_note from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.label = 'B1' and t.floor = 2) = 'Monkey 2 ขวด', 'B1 gets 2 bottles');
+set role authenticated;
+select t_login('00000000-0000-0000-0000-00000000000b');
+reset role;
+insert into day_layouts (night, layout_id) select '2030-04-01', id from layouts where name = 'Purpeech';
+set role authenticated;
+insert into bookings (table_id, start_at, duration_min, party_size, guest_name, phone, category_id, pay_status, wristband_at)
+select t.id, '2030-04-01 20:00+07', 360, 5, 'Partner', '0822222222', (select id from categories where name = 'เพื่อนหุ้นส่วน'), 'waiting', now() - interval '3 days'
+from tables t join layouts l on l.id = t.layout_id where l.name = 'Purpeech' and t.label = 'A1';
+select t_assert((select pay_status = 'waiting' and not paid from bookings where guest_name = 'Partner'), 'staff choose status at booking');
+select t_assert((select wristband_at > now() - interval '1 minute' and wristband_by = '00000000-0000-0000-0000-00000000000b' from bookings where guest_name = 'Partner'), 'wristband stamped by server');
+select t_assert(booking_due((select id from bookings where guest_name = 'Partner')) = 5670, 'category discount 10% off 6,300');
+update bookings set sold_price = 6000 where guest_name = 'Partner';
+select t_assert(booking_due((select id from bookings where guest_name = 'Partner')) = 6000, 'agreed price overrides discount');
+update bookings set pay_status = 'at_venue' where guest_name = 'Partner';
+insert into booking_payments (booking_id, amount, method) select id, 6000, 'cash' from bookings where guest_name = 'Partner';
+select t_assert((select pay_status = 'at_venue' and amount_paid = 6000 from bookings where guest_name = 'Partner'), 'at_venue not overridden by payment');
+update bookings set pay_status = 'paid' where guest_name = 'Partner';
+select t_assert((select paid and paid_by = '00000000-0000-0000-0000-00000000000b' from bookings where guest_name = 'Partner'), 'paid stamped when status paid');
+update bookings set wristband_at = null where guest_name = 'Partner';
+select t_assert((select wristband_at is null and wristband_by is null from bookings where guest_name = 'Partner'), 'wristband can be undone');
+select t_expect_error($q$update bookings set pay_status = 'free' where guest_name = 'Partner'$q$, 'pay_status_check');
+select t_expect_error($q$insert into categories (name) values ('x')$q$, 'row-level security');
+select t_assert((select count(*) from booking_history h join bookings b on b.id = h.booking_id where b.guest_name = 'Partner' and h.old_row->>'pay_status' <> h.new_row->>'pay_status') = 2, 'pay status changes in history');
 reset role;
 
 select 'PRESET TESTS PASSED' as result;
