@@ -4,7 +4,7 @@ import * as T from './time.js';
 import { log, configure as configureLog, installGlobalHandlers, recent as recentLogs, setDebug, isDebug, flush as flushLogs } from './log.js';
 import { dueOf, paidOf, tableIdsOf, listPriceOf, netPriceOf, receivedOf, stillOwes, PAY_STATUSES } from './money.js';
 import { fill, paymentLine, lineShareUrl } from './share.js';
-import { summarizeRange, toCSV, concertRows, freeTables } from './reports.js';
+import { summarizeRange, toCSV, concertRows, freeTables, cashUp } from './reports.js';
 import { concertWorkbook, loadExcelJS } from './concert-xlsx.js';
 import { VERSION } from './version.js';
 
@@ -93,7 +93,8 @@ const payOf = (b) => b.pay_status ?? 'unpaid';
 const isOpen = (b) => b.status !== 'cancelled' && b.status !== 'no_show';
 // Payment matters when the table has a price, something was charged, or staff set a status.
 const tracksPayment = (b) => dueOfB(b) > 0 || payOf(b) !== 'unpaid' || paidOfB(b) > 0;
-const owes = (b) => isOpen(b) && tracksPayment(b) && stillOwes(payOf(b));
+// Still owes money: not marked paid and less recorded than due.
+const owes = (b) => isOpen(b) && stillOwes(payOf(b)) && dueOfB(b) > paidOfB(b);
 const needsPayment = (b) => isOpen(b) && dueOfB(b) > 0;
 function payPill(b) {
   if (!tracksPayment(b) || (!isOpen(b) && payOf(b) !== 'paid')) return '';
@@ -260,7 +261,7 @@ function render() {
   if (!S.settings) { app.innerHTML = `<div class="center muted">${t('loading')}</div>`; return; }
   const body = {
     map: viewMap, list: viewList, summary: viewSummary,
-    layouts: viewLayouts, staff: viewStaff, settings: viewSettings, reports: viewReports, concert: viewConcert,
+    layouts: viewLayouts, staff: viewStaff, settings: viewSettings, reports: viewReports, concert: viewConcert, door: viewDoor,
   }[S.view]();
   app.innerHTML = `<div class="shell">${viewRail()}<div class="col">${viewTop()}<main>${body}</main></div>${
     S.view === 'map' ? `<aside class="side" aria-label="${t('tonight')}">${viewAside()}</aside>` : ''}</div>${viewBottomNav()}`;
@@ -310,9 +311,9 @@ function viewInactive() {
 
 const wide = () => window.matchMedia('(min-width: 1024px)').matches;
 const hasBottomNav = () => !window.matchMedia('(min-width: 768px)').matches;
-const NIGHT_VIEWS = ['map', 'list', 'summary', 'concert'];
+const NIGHT_VIEWS = ['map', 'list', 'summary', 'concert', 'door'];
 function navItems() {
-  const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart], ['concert', 'tab_concert', ICON.ticket]];
+  const items = [['map', 'tab_map', ICON.map], ['list', 'tab_list', ICON.list], ['summary', 'tab_summary', ICON.chart], ['concert', 'tab_concert', ICON.ticket], ['door', 'tab_door', ICON.wristband]];
   if (isManager()) items.push(['reports', 'tab_reports', ICON.trend], ['layouts', 'tab_layouts', ICON.edit], ['staff', 'tab_staff', ICON.people], ['settings', 'tab_settings', ICON.gear]);
   return items;
 }
@@ -591,11 +592,12 @@ function viewMap() {
         <input id="at-range" type="range" min="0" max="${slots.length - 1}" step="1" value="${atIndex()}" data-input="at" aria-label="${t('at_time')}">
         ${isTonight() && S.at !== 'now' ? `<button class="ghost small" data-action="at-now">${t('now')}</button>` : ''}
       </div>`}
-      <div class="row">
-        ${isConcertLayout(nightLayoutId()) ? `<button class="ghost nb" data-action="view" data-v="concert">${ICON.ticket} ${t('concert_report')}</button>` : ''}
-        <button class="primary nb" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
-      </div>
+      <button class="primary nb" data-action="new-booking">${ICON.plus} ${t('new_booking')}</button>
     </div>
+    ${isConcertLayout(nightLayoutId()) ? `<div class="concert-bar">
+      <button class="nb" data-action="view" data-v="door">${ICON.wristband} ${t('tab_door')}</button>
+      <button class="nb" data-action="view" data-v="concert">${ICON.ticket} ${t('concert_report')}</button>
+    </div>` : ''}
     ${tables.length ? `<div class="floor-wrap" id="floor-wrap">${mapSvg()}</div>`
       : `<p class="empty">${t('no_tables')}${isManager() ? ' ' + t('no_tables_mgr') : ''}</p>`}
     <div class="legend">
@@ -711,8 +713,99 @@ function viewSummary() {
       ${card(s.cancelled, t('sum_cancelled'))}
       ${card(s.noShows, t('sum_noshows'))}
     </div>
+    ${priced.length ? cashUpSection() : ''}
   </section>`;
 }
+
+// End-of-night cash-up: what came in by method and by staff, what is still to collect, and the drawer count.
+function cashUpSection() {
+  const c = cashUp(S.bookings, dueOfB);
+  const row = (k, v, cls = '') => `<div class="pay-row ${cls}"><span class="grow">${k}</span><b>${v}</b></div>`;
+  return `<section class="blk cashup">
+    <h3>${ICON.chart} ${t('cashup')}</h3>
+    <div class="cash-cols">
+      <div>
+        <div class="sec-title">${t('cash_by_method')}</div>
+        ${['cash', 'transfer', 'card'].map((m) => row(t('m_' + m), baht(c.byMethod[m]))).join('')}
+        ${c.unrecorded ? row(t('cash_unrecorded'), baht(c.unrecorded), 'muted') : ''}
+        ${row(`<b>${t('total')}</b>`, baht(c.total), 'total')}
+      </div>
+      <div>
+        <div class="sec-title">${t('cash_by_staff')}</div>
+        ${c.byStaff.map((x) => row(esc(personName(x.id)), baht(x.amount))).join('') || '<p class="muted small-text">—</p>'}
+      </div>
+    </div>
+    <div class="sec-title">${t('cash_to_collect')} (${c.outstanding.length}) · ${baht(c.toCollect)}</div>
+    <div class="list">${c.outstanding.map((o) => `<button class="brow" data-action="open-booking" data-id="${o.booking.id}">
+      <span class="time">${esc(tablesLabel(o.booking))}</span>
+      <span class="grow"><strong>${esc(o.booking.guest_name || t('walk_in'))}</strong></span>
+      <span class="pills">${payPill(o.booking)}<b>${baht(o.left)}</b></span></button>`).join('') || `<p class="muted small-text">${t('cash_all_in')}</p>`}</div>
+    <div class="drawer">
+      <label>${t('cash_counted')}<input type="number" inputmode="numeric" min="0" step="1" data-input="drawer" data-expect="${c.byMethod.cash}" placeholder="${c.byMethod.cash}"></label>
+      <div id="drawer-diff" class="drawer-diff muted small-text">${t('cash_expected').replace('{n}', baht(c.byMethod.cash))}</div>
+    </div>
+    <button class="ghost" data-action="cashup-share">${ICON.send} ${t('cash_share')}</button>
+  </section>`;
+}
+function cashUpText() {
+  const c = cashUp(S.bookings, dueOfB);
+  const counted = Number($('[data-input=drawer]')?.value || NaN);
+  return [
+    `${t('cashup')} ${fmtNight(S.night)} · ${layoutName(nightLayoutId())}`,
+    ...['cash', 'transfer', 'card'].map((m) => `${t('m_' + m)}: ${baht(c.byMethod[m])}`),
+    c.unrecorded ? `${t('cash_unrecorded')}: ${baht(c.unrecorded)}` : '',
+    `${t('total')}: ${baht(c.total)}`,
+    Number.isFinite(counted) ? `${t('cash_counted')}: ${baht(counted)} (${counted - c.byMethod.cash >= 0 ? '+' : '−'}${baht(Math.abs(counted - c.byMethod.cash))})` : '',
+    c.outstanding.length ? `${t('cash_to_collect')}: ${c.outstanding.map((o) => `${tablesLabel(o.booking)} ${baht(o.left)}`).join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+// ───────── Door mode (concert check-in) ─────────
+// Search a name, phone or table; one tap seats the guests and gives the wristband.
+const doorRows = () => {
+  const q = (S.doorQ ?? '').trim().toLowerCase();
+  const f = S.doorF ?? 'coming';
+  return S.bookings.filter((b) => isOpen(b) && b.status !== 'done')
+    .filter((b) => f === 'all' || (f === 'coming' ? b.status === 'booked' : b.status === 'seated'))
+    .filter((b) => !q || [b.guest_name, b.phone, tablesLabel(b)].some((v) => String(v ?? '').toLowerCase().includes(q)))
+    .sort((a, b) => tablesLabel(a).localeCompare(tablesLabel(b), undefined, { numeric: true }));
+};
+function doorCard(b) {
+  const concert = isConcertLayout(nightLayoutId());
+  const unpaid = owes(b);
+  let action;
+  if (b.status === 'booked') action = `<button class="primary door-go" data-action="checkin" data-id="${b.id}">${ICON.check} ${concert ? t('checkin') : t('act_seat')}</button>`;
+  else if (concert && !b.wristband_at) action = `<button class="primary door-go" data-action="wristband" data-from="door" data-id="${b.id}" data-v="1">${ICON.wristband} ${t('wb_give')}</button>`;
+  else action = `<span class="door-done">${ICON.check} ${t('step_seated')}${b.wristband_at ? ' · ' + t('wristband') : ''}</span>`;
+  const sets = T.tablesOf(b).map((id) => tableById(id)?.set_note).filter(Boolean);
+  return `<div class="door-card ${unpaid ? 'owes' : ''} st-${b.status}">
+    <button class="bk-table sm" data-action="open-booking" data-id="${b.id}" aria-label="${t('details_more')}">${esc(tablesLabel(b))}</button>
+    <div class="grow door-info">
+      <b>${esc(b.guest_name || t('walk_in'))}</b>
+      <span class="muted small-text">${esc(b.phone || '')} · ${ICON.person} ${b.party_size}${sets.length ? ' · ' + esc(sets.join(' + ')) : ''}</span>
+      <span class="row wrap">${payPill(b)}${catChip(b)}</span>
+    </div>
+    ${action}
+  </div>`;
+}
+function viewDoor() {
+  const live = S.bookings.filter((b) => isOpen(b));
+  const arrived = live.filter((b) => b.status === 'seated' || b.status === 'done').length;
+  const wb = live.filter((b) => b.wristband_at).length;
+  const concert = isConcertLayout(nightLayoutId());
+  const f = S.doorF ?? 'coming';
+  return `<section class="door">
+    <div class="stats-row">
+      <span class="chip"><b>${arrived}/${live.length}</b> ${t('step_seated')}</span>
+      ${concert ? `<span class="chip"><b>${wb}/${live.length}</b> ${t('wristband')}</span>` : ''}
+      ${live.filter(owes).length ? `<span class="chip unpaid"><b>${live.filter(owes).length}</b> ${t('f_unpaid')}</span>` : ''}
+    </div>
+    <input class="search door-search" type="search" placeholder="${t('door_search')}" value="${esc(S.doorQ ?? '')}" data-input="door-q" aria-label="${t('door_search')}" enterkeyhint="search">
+    <div class="filters">${['coming', 'seated', 'all'].map((k) => `<button class="fchip ${f === k ? 'on' : ''}" data-action="door-filter" data-f="${k}" aria-pressed="${f === k}">${t('door_f_' + k)}</button>`).join('')}</div>
+    <div id="door-rows" class="door-rows">${doorList()}</div>
+  </section>`;
+}
+const doorList = () => { const r = doorRows(); return r.length ? r.map(doorCard).join('') : `<p class="empty">${t('door_none')}</p>`; };
 
 // ───────── Layouts page ─────────
 // Concert layout = a layout whose tables have price zones. Zones are colour + price + set drinks, applied to tables.
@@ -1489,6 +1582,11 @@ function statusSection(b) {
   } else if (closed) {
     actions = `<p class="closed-as">${t('closed_as').replace('{s}', t('st_' + b.status))}</p>`;
   }
+  if (isManager() && b.status !== 'booked') {
+    const back = b.status === 'seated' ? ['booked'] : b.status === 'done' ? ['seated', 'booked'] : ['booked'];
+    actions += `<div class="undo-row"><span class="muted small-text">${t('undo_status')}</span>${back.map((st) =>
+      `<button class="ghost small" data-action="revert-status" data-id="${b.id}" data-s="${st}">${ICON.undo} ${t('st_' + st)}</button>`).join('')}</div>`;
+  }
   return `<section class="blk status-blk">
     <h3>${t('status_title')}</h3>
     ${closed ? '' : track}
@@ -1585,6 +1683,7 @@ function paymentSection(b) {
       ${paid ? `<dt>${t('paid_so_far')}</dt><dd>${baht(paid)}</dd>` : ''}
       ${paid && st !== 'paid' ? `<dt>${t('remaining')}</dt><dd class="${left ? 'c-owed' : ''}"><b>${baht(left)}</b></dd>` : ''}
     </dl>` : ''}
+    ${st === 'paid' && paid > 0 && paid < due ? `<p class="pay-warn">${ICON.warn} ${t('pay_mismatch').replace('{n}', baht(due - paid))}</p>` : ''}
     ${pays.length ? `<div class="pay-list">${pays.map((p) => `<div class="pay-row">
       <span class="grow"><b>${baht(p.amount)}</b> · ${t('m_' + p.method)}
         <span class="muted small-text pay-meta">${esc(personName(p.created_by))} · ${stamp(p.created_at)}</span></span>
@@ -1903,7 +2002,7 @@ const actions = {
     try {
       await run(sb.from('bookings').update({ wristband_at: on ? new Date().toISOString() : null }).eq('id', id), 'booking.wristband');
       log.info('wristband.' + (on ? 'given' : 'undone'), { booking: id });
-      if (el.dataset.from === 'report') { await loadNight(); render(); } else await reopen(id);
+      if (el.dataset.from === 'report' || el.dataset.from === 'door') { await loadNight(); render(); } else await reopen(id);
     } catch (e) { toast(errMsg(e), true); }
   },
   step(el) {
@@ -1911,6 +2010,33 @@ const actions = {
     input.value = Math.min(Number(input.max) || 200, Math.max(Number(input.min) || 1, (Number(input.value) || 0) + Number(el.dataset.d)));
   },
   noop() {},
+  async checkin(el) {
+    const b = S.bookings.find((x) => x.id === el.dataset.id);
+    if (!b) return;
+    if (owes(b) && !confirm(t('checkin_unpaid').replace('{s}', t('ps_' + payOf(b))))) return;
+    const concert = isConcertLayout(nightLayoutId());
+    try {
+      await run(sb.from('bookings').update({ status: 'seated', ...(concert && !b.wristband_at ? { wristband_at: new Date().toISOString() } : {}) }).eq('id', b.id), 'door.checkin');
+      log.info('door.checkin', { booking: b.id, wristband: concert });
+      toast(`${t('checkin')}: ${b.guest_name || t('walk_in')} · ${tablesLabel(b)}`);
+      await loadNight(); render();
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  'door-filter'(el) { S.doorF = el.dataset.f; render(); },
+  async 'revert-status'(el) {
+    if (!confirm(t('confirm_revert').replace('{s}', t('st_' + el.dataset.s)))) return;
+    try {
+      await run(sb.from('bookings').update({ status: el.dataset.s }).eq('id', el.dataset.id), 'booking.revert_status');
+      log.warn('booking.status_reverted', { booking: el.dataset.id, to: el.dataset.s });
+      toast(t('saved')); await reopen(el.dataset.id);
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  async 'cashup-share'() {
+    const text = cashUpText();
+    try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); toast(t('copied')); } }
+    catch (e) { if (e?.name !== 'AbortError') { log.warn('cashup.share_failed', e); window.open(lineShareUrl(text), '_blank', 'noopener'); } }
+    log.info('cashup.shared');
+  },
   reload() { location.reload(); },
   'pick-layout'() {
     openModal(`<h2>${t('pick_night_layout')}</h2>
@@ -1922,7 +2048,12 @@ const actions = {
   excel() { return downloadConcertExcel(); },
   async 'pay-delete'(el) {
     if (!confirm(t('confirm_delete_payment'))) return;
-    try { await run(sb.from('booking_payments').delete().eq('id', el.dataset.id), 'payment.delete'); log.warn('payment.deleted', { payment: el.dataset.id, booking: el.dataset.bid }); await reopen(el.dataset.bid); }
+    try {
+      await run(sb.from('booking_payments').delete().eq('id', el.dataset.id), 'payment.delete');
+      log.warn('payment.deleted', { payment: el.dataset.id, booking: el.dataset.bid });
+      await reopen(el.dataset.bid);
+      toast(t('pay_deleted_hint'));
+    }
     catch (e) { toast(errMsg(e), true); }
   },
   async 'item-delete'(el) {
@@ -2110,6 +2241,16 @@ async function lookupGuest(input) {
 
 document.addEventListener('input', (e) => {
   if (e.target.dataset.input === 'q') { S.q = e.target.value; $('#list-rows').innerHTML = listRows(); return; }
+  if (e.target.dataset.input === 'door-q') { S.doorQ = e.target.value; $('#door-rows').innerHTML = doorList(); return; }
+  if (e.target.dataset.input === 'drawer') {
+    const exp = Number(e.target.dataset.expect), v = e.target.value === '' ? null : Number(e.target.value);
+    const el = $('#drawer-diff');
+    if (v == null) { el.className = 'drawer-diff muted small-text'; el.textContent = t('cash_expected').replace('{n}', baht(exp)); return; }
+    const d = v - exp;
+    el.className = 'drawer-diff ' + (d === 0 ? 'ok' : d > 0 ? 'over' : 'short');
+    el.textContent = d === 0 ? t('cash_match') : (d > 0 ? t('cash_over') : t('cash_short')).replace('{n}', baht(Math.abs(d)));
+    return;
+  }
   if (e.target.dataset.input === 'phone') { clearTimeout(phoneTimer); phoneTimer = setTimeout(() => lookupGuest(e.target), 350); return; }
   if (e.target.dataset.input !== 'at') return;
   S.at = timeSlots()[Number(e.target.value)];

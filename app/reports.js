@@ -81,6 +81,28 @@ export function concertRows(bookings, tableById, categoryById = () => null) {
   return { rows: live, totals };
 }
 
+// End-of-night cash-up: money recorded per method and per staff, money marked paid but never recorded,
+// and what is still to collect. dueOf(b) gives the amount due for a booking.
+export function cashUp(bookings, dueOf) {
+  const byMethod = { cash: 0, transfer: 0, card: 0 };
+  const byStaff = new Map();
+  let unrecorded = 0;
+  const outstanding = [];
+  for (const b of bookings) {
+    const pays = b.booking_payments ?? [];
+    for (const p of pays) {
+      byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amount;
+      byStaff.set(p.created_by, (byStaff.get(p.created_by) ?? 0) + p.amount);
+    }
+    const due = dueOf(b), rec = paidOf(pays);
+    if (b.pay_status === 'paid') unrecorded += Math.max(0, due - rec);
+    else if (ACTIVE(b) && (due > 0 || b.pay_status !== 'unpaid') && due - rec > 0) outstanding.push({ booking: b, left: due - rec });
+  }
+  const recorded = byMethod.cash + byMethod.transfer + byMethod.card;
+  return { byMethod, byStaff: [...byStaff.entries()].map(([id, amount]) => ({ id, amount })).sort((a, b) => b.amount - a.amount),
+    recorded, unrecorded, total: recorded + unrecorded, outstanding, toCollect: outstanding.reduce((n, o) => n + o.left, 0) };
+}
+
 // Tables nobody holds tonight (for "still for sale").
 export function freeTables(layoutTables, bookings) {
   const held = new Set(bookings.filter(ACTIVE).flatMap(tableIdsOf));

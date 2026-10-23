@@ -140,6 +140,38 @@ try {
   await page.screenshot({ path: path.join(SHOTS, 'features-concert.png'), fullPage: true });
   step('concert report: sheet columns, wristband tick, Excel download');
 
+  // Door mode: search, one-tap check-in (seat + wristband), unpaid guests need a confirm
+  await more('door');
+  await page.waitForSelector('.door-card');
+  await page.fill('.door-search', 'G2');
+  assert.equal(await page.locator('.door-card').count(), 1, 'search narrows to G2');
+  await page.click('.door-card [data-action=checkin]');
+  await page.waitForFunction(() => { const b = window.__db.bookings.find((x) => x.id === '2'); return b.status === 'seated' && b.wristband_at; });
+  await page.click('[data-action=door-filter][data-f=seated]');
+  assert.match(await page.textContent('#door-rows'), /G2/);
+  assert.match(await page.textContent('.door .stats-row'), /1\/2/);
+  await page.screenshot({ path: path.join(SHOTS, 'features-door.png'), fullPage: true });
+  step('door mode: search, check-in with wristband');
+
+  // Manager undo: seated back to booked, kept in history
+  await page.click('.door-card [data-action=open-booking]');
+  await page.click('#modal [data-action=revert-status][data-s=booked]');
+  await page.waitForFunction(() => window.__db.bookings.find((x) => x.id === '2').status === 'booked');
+  await page.click('#modal [data-action=close-modal]');
+  step('manager can undo a status');
+
+  // Cash-up: by method, by staff, drawer difference
+  await page.evaluate(() => { window.__db.booking_payments.push({ id: 'P2', booking_id: '2', amount: 1000, method: 'cash', slip_path: null, created_by: 'U2', created_at: new Date().toISOString() }); });
+  await page.click('.bottomnav [data-v=summary]');
+  await page.click('.datestrip [data-d="2026-10-22"]').catch(() => {});
+  await page.waitForSelector('.cashup');
+  assert.match(await page.textContent('.cashup'), /เงินสด\s*1,000฿/);
+  assert.match(await page.textContent('.cashup'), /Nok\s*1,000฿/);
+  await page.fill('[data-input=drawer]', '900');
+  assert.match(await page.textContent('#drawer-diff'), /ขาด 100฿/);
+  await page.screenshot({ path: path.join(SHOTS, 'features-cashup.png'), fullPage: true });
+  step('cash-up: by method, by staff, drawer short/over');
+
   // Products: add a package in settings, it appears in the booking extras picker
   await more('settings');
   const newRow = page.locator('form[data-form=product]').last();

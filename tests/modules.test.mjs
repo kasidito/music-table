@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as T from '../app/time.js';
 import { dueOf, paidOf, netPriceOf, receivedOf, baht } from '../app/money.js';
 import { fill, paymentLine, lineShareUrl } from '../app/share.js';
-import { summarizeRange, toCSV, concertRows, freeTables } from '../app/reports.js';
+import { summarizeRange, toCSV, concertRows, freeTables, cashUp } from '../app/reports.js';
 import { concertWorkbook } from '../app/concert-xlsx.js';
 import ExcelJS from '../tools/node_modules/exceljs/excel.js';
 import { sanitize } from '../app/log.js';
@@ -108,6 +108,24 @@ test('reports: totals, no-show rate, outstanding, top tables, tiers', () => {
   assert.deepEqual(r.perNight.map((n) => n.night), ['2030-01-10', '2030-01-11']);
   assert.equal(r.topTables[0].label, 'A1');
   assert.equal(r.tiers[0].price, 6300);
+});
+
+test('cash-up: by method and staff, marked-paid-but-unrecorded, still to collect', () => {
+  const list = [
+    bk({ id: '1', pay_status: 'paid', booking_payments: [{ amount: 2000, method: 'transfer', created_by: 'U1' }, { amount: 4300, method: 'cash', created_by: 'U2' }] }),
+    bk({ id: '2', table_id: 'B', pay_status: 'paid', booking_payments: [] }),
+    bk({ id: '3', table_id: 'D', pay_status: 'deposit', booking_payments: [{ amount: 1000, method: 'transfer', created_by: 'U2' }] }),
+    bk({ id: '4', table_id: 'D', pay_status: 'at_venue', booking_payments: [] }),
+    bk({ id: '5', table_id: 'D', pay_status: 'unpaid', status: 'cancelled' }),
+    bk({ id: '6', table_id: 'C', pay_status: 'unpaid' }),
+  ];
+  const c = cashUp(list, (b) => dueOf(b, tb));
+  assert.deepEqual(c.byMethod, { cash: 4300, transfer: 3000, card: 0 });
+  assert.deepEqual(c.byStaff, [{ id: 'U2', amount: 5300 }, { id: 'U1', amount: 2000 }]);
+  assert.equal(c.unrecorded, 5800, 'A2 marked paid with no payment row');
+  assert.equal(c.total, 13100);
+  assert.deepEqual(c.outstanding.map((o) => [o.booking.id, o.left]), [['3', 6600], ['4', 7600]], 'cancelled and free tables left out');
+  assert.equal(c.toCollect, 14200);
 });
 
 test('csv: BOM, quoting, Thai text', () => {

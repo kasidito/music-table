@@ -146,4 +146,16 @@ select t_expect_error($q$insert into categories (name) values ('x')$q$, 'row-lev
 select t_assert((select count(*) from booking_history h join bookings b on b.id = h.booking_id where b.guest_name = 'Partner' and h.old_row->>'pay_status' <> h.new_row->>'pay_status') = 2, 'pay status changes in history');
 reset role;
 
+-- ── 012: manager can undo a status, staff cannot ──
+set role authenticated;
+select t_login('00000000-0000-0000-0000-00000000000b');
+update bookings set status = 'no_show' where guest_name = 'Partner' and status = 'booked';
+select t_expect_error($q$update bookings set status = 'booked' where guest_name = 'Partner'$q$, 'invalid_status_change');
+select t_login('00000000-0000-0000-0000-00000000000a');
+update bookings set status = 'booked' where guest_name = 'Partner';
+select t_assert((select status = 'booked' from bookings where guest_name = 'Partner'), 'manager undid no-show');
+select t_assert((select count(*) from booking_history h join bookings b on b.id = h.booking_id where b.guest_name = 'Partner' and h.new_row->>'status' = 'booked' and h.old_row->>'status' = 'no_show') = 1, 'undo recorded in history');
+select t_assert((select bool_and(set_note is not null) from tables t join layouts l on l.id = t.layout_id where l.name = 'Greasy Cafe' and t.kind = 'table'), 'Greasy set drinks');
+reset role;
+
 select 'PRESET TESTS PASSED' as result;

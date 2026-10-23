@@ -477,7 +477,7 @@ try {
   await page.click('button[type=submit]');
   await page.waitForSelector('svg.floor');
   await page.click('.bottomnav [data-action=more]');
-  assert.deepEqual(await page.locator('.menu-item[data-action=view]').evaluateAll((els) => els.map((e) => e.dataset.v)), ['concert'], 'only the concert report, no manager pages');
+  assert.deepEqual(await page.locator('.menu-item[data-action=view]').evaluateAll((els) => els.map((e) => e.dataset.v)), ['concert', 'door'], 'only concert report and door check-in, no manager pages');
   await page.click('#modal [data-action=close-modal]');
   assert.equal(await page.locator('[data-action=pick-layout]').count(), 0, 'staff cannot switch the layout');
   step('staff sees no manager tabs or layout picker');

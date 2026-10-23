@@ -28,7 +28,7 @@ jobs:
       - name: Version file references
         run: |
           V=$(echo "$GITHUB_SHA" | cut -c1-7)
-          sed -i -E "s#(href|src)=\"(styles\.css|app\.js|vendor/supabase\.js)\"#\1=\"\2?v=$V\"#g" app/index.html
+          sed -i -E "s#(href|src)=\"(styles\.css|fonts/fonts\.css|app\.js|vendor/supabase\.js)\"#\1=\"\2?v=$V\"#g" app/index.html
           sed -i -E "s#(from '\./[a-z0-9-]+\.js)'#\1?v=$V'#g" app/*.js
           grep -c "?v=$V" app/index.html app/app.js
       - uses: actions/upload-pages-artifact@v5
