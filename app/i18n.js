@@ -1,5 +1,6 @@
 const DICT = {
   th: {
+    update_ready: "มีเวอร์ชันใหม่ แตะเพื่ออัปเดต",
     zones_count: "{n} โซนราคา",
     layouts_title: "ผังทั้งหมด",
     create_layout: "สร้างผังใหม่",
@@ -264,6 +265,7 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    update_ready: "New version available. Tap to update",
     zones_count: "{n} price zones",
     layouts_title: "All layouts",
     create_layout: "New layout",

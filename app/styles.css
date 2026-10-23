@@ -602,3 +602,11 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .assign-banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: rgba(243, 150, 70, .14); font-weight: 600; }
 svg.assigning .tbl:not(.fx) { cursor: copy; }
 svg.assigning .tbl.in-zone :is(rect, ellipse) { stroke: var(--accent); stroke-width: 5; }
+
+/* New version banner */
+.update-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 40;
+  min-height: 48px; border-radius: 999px; padding: 0 20px; background: var(--accent); color: var(--accent-text); font-weight: 700; border: 0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45); white-space: nowrap;
+}
+@media (min-width: 768px) { .update-bar { bottom: 24px; } }

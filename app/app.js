@@ -227,6 +227,8 @@ async function init() {
   window.addEventListener('online', () => { log.info('net.online'); toast(t('back_online')); });
   window.addEventListener('offline', () => { log.warn('net.offline'); toast(t('offline'), true); });
   setInterval(tick, 60000);
+  setInterval(checkForUpdate, 5 * 60000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
   const { data } = await sb.auth.getSession();
   S.user = data.session?.user ?? null;
   sb.auth.onAuthStateChange((_e, session) => {
@@ -234,6 +236,19 @@ async function init() {
     if (u?.id !== S.user?.id) { S.user = u; setTimeout(boot, 0); }
   });
   await boot();
+}
+
+// A newer deploy is out: offer a one-tap reload (phones keep old files open for hours).
+async function checkForUpdate() {
+  if (VERSION === 'dev' || $('#update-bar')) return;
+  try {
+    const text = await (await fetch(`version.js?t=${Date.now()}`, { cache: 'no-store' })).text();
+    const live = text.match(/VERSION = '([^']+)'/)?.[1];
+    if (live && live !== VERSION) {
+      log.info('app.update_available', { from: VERSION, to: live });
+      document.body.insertAdjacentHTML('beforeend', `<button id="update-bar" class="update-bar" data-action="reload">${t('update_ready')}</button>`);
+    }
+  } catch { /* offline: try again later */ }
 }
 
 // ───────── Views ─────────
@@ -1896,6 +1911,7 @@ const actions = {
     input.value = Math.min(Number(input.max) || 200, Math.max(Number(input.min) || 1, (Number(input.value) || 0) + Number(el.dataset.d)));
   },
   noop() {},
+  reload() { location.reload(); },
   'pick-layout'() {
     openModal(`<h2>${t('pick_night_layout')}</h2>
       <p class="muted small-text">${fmtNight(S.night)}</p>

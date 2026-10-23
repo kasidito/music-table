@@ -24,6 +24,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Stamp app version
         run: echo "export const VERSION = '$(echo "$GITHUB_SHA" | cut -c1-7) $(date -u +%Y-%m-%d)';" > app/version.js
+      # Bust browser caches: every file reference carries the commit id, so phones never mix old and new files.
+      - name: Version file references
+        run: |
+          V=$(echo "$GITHUB_SHA" | cut -c1-7)
+          sed -i -E "s#(href|src)=\"(styles\.css|app\.js|vendor/supabase\.js)\"#\1=\"\2?v=$V\"#g" app/index.html
+          sed -i -E "s#(from '\./[a-z0-9-]+\.js)'#\1?v=$V'#g" app/*.js
+          grep -c "?v=$V" app/index.html app/app.js
       - uses: actions/upload-pages-artifact@v5
         with:
           path: app
