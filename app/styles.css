@@ -170,6 +170,10 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
   border-bottom: 1px solid var(--line);
 }
 @media (min-width: 768px) { .topbar { padding: 14px 24px 12px; } }
+/* iPhone: keep the first row clear of the system's soft edge under the status bar */
+@supports (padding-top: env(safe-area-inset-top)) {
+  @media (max-width: 767px) { .topbar { padding-top: calc(env(safe-area-inset-top) + 22px); } }
+}
 @media (max-width: 767px) { .topbar { position: static; } }
 .top-row { margin-bottom: 10px; gap: 10px; }
 .top-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -216,6 +220,7 @@ main { padding: 12px 16px calc(110px + env(safe-area-inset-bottom)); width: 100%
 .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
 .seg button { border: 0; border-radius: 9px; background: transparent; min-height: 40px; padding: 0 16px; }
 .seg button.on { background: var(--accent); color: var(--accent-text); font-weight: 700; }
+.seg-seats { margin-left: 6px; font-size: 12px; font-weight: 600; opacity: .8; font-variant-numeric: tabular-nums; }
 .timebar { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; color: var(--muted); }
 .at-label { color: var(--text); font-weight: 600; font-size: 14px; white-space: nowrap; min-width: 92px; }
 .timebar input[type=range] { flex: 1; min-height: 32px; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
@@ -639,3 +644,9 @@ svg.assigning .tbl.in-zone :is(rect, ellipse) { stroke: var(--accent); stroke-wi
 .undo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line-strong); }
 .pay-warn { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; padding: 8px 10px; border-radius: 10px; background: rgba(247, 201, 72, .12); color: #FFE7A3; font-size: .9rem; }
 .pay-warn svg { color: var(--pay-waiting); flex: none; }
+
+/* Solid strip behind the iPhone status bar so scrolled content never shows (blurred) underneath it */
+body::before {
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top, 0px);
+  background: var(--bg); z-index: 50; pointer-events: none;
+}

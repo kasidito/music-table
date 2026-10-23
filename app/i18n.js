@@ -1,5 +1,6 @@
 const DICT = {
   th: {
+    seats_word: "ที่นั่ง",
     tab_door: "เช็กอินหน้าประตู",
     checkin: "เช็กอิน + ริสแบนด์",
     checkin_unpaid: "ลูกค้ายัง \"{s}\" ให้เข้าได้เลยไหม?",
@@ -290,6 +291,7 @@ const DICT = {
     err_in_use: 'ลบไม่ได้ เพราะมีการจองใช้งานอยู่', err_login: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง',
   },
   en: {
+    seats_word: "seats",
     tab_door: "Door check-in",
     checkin: "Check in + wristband",
     checkin_unpaid: "Payment is \"{s}\". Let them in anyway?",

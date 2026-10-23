@@ -91,6 +91,7 @@ try {
   await page.clock.runFor(60 * 60000);
   const cls = await page.getAttribute('svg.floor [data-tid="T2"]', 'class');
   assert.ok(/st-(booked|late|seated)/.test(cls), `T2 held by combined booking (${cls})`);
+  assert.match(await page.textContent('svg.floor [data-tid="T1"]'), /4\/6/, 'guests/seats across both tables');
   step('combine tables: extra table saved and shown as held');
 
   // Move table: G1 -> VIP is on floor 2; move to T2 on floor 1 instead

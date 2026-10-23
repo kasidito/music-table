@@ -360,8 +360,10 @@ function statsRow() {
   const seated = S.bookings.filter((b) => b.status === 'seated').length;
   const late = isTonight() ? S.bookings.filter((b) => T.isLate(b, now)).length : 0;
   const unpaid = S.bookings.filter(owes).length;
+  const seats = seatUse();
   return `<div class="stats-row">
     <span class="chip"><b>${T.tablesBooked(S.bookings)}</b>/${total} ${t('tables_booked')}</span>
+    <span class="chip ${seats.used > seats.cap ? 'late' : ''}"><b>${seats.used}</b>/${seats.cap} ${t('seats_word')}</span>
     <span class="chip"><b class="c-seated">${seated}</b> ${t('seated_now')}</span>
     ${late ? `<span class="chip late"><b>${late}</b> ${t('late')}</span>` : ''}
     ${unpaid ? `<button class="chip unpaid" data-action="view" data-v="list"><b>${unpaid}</b> ${t('unpaid')}</button>` : ''}
@@ -538,6 +540,15 @@ async function saveEdit() {
   else toast(t('saved'));
 }
 
+// Seats: guests booked against table capacity (whole night, or one floor). A combined booking counts at its main table.
+const bookingSeats = (b) => T.tablesOf(b).reduce((n, id) => n + (tableById(id)?.seats ?? 0), 0);
+function seatUse(floor) {
+  const cap = tablesOf(nightLayoutId(), floor).reduce((n, x) => n + (x.seats ?? 0), 0);
+  const used = S.bookings.filter((b) => T.isActive(b) && (!floor || tableById(b.table_id)?.floor === floor))
+    .reduce((n, b) => n + b.party_size, 0);
+  return { used, cap };
+}
+
 function mapSvg() {
   const lid = nightLayoutId();
   const items = itemsOf(lid, S.floor);
@@ -545,7 +556,10 @@ function mapSvg() {
   const body = items.map((tb) => {
     if (!isTable(tb)) return tableSvg(tb, '', []);
     const st = T.tableStateAt(tb.id, S.bookings, ms, TOPTS());
-    const info = st.booking ? hhmm(st.booking.start_at) : st.next ? hhmm(st.next.start_at) : '';
+    const b = st.booking;
+    // Held tables show guests/seats (e.g. 3/4); an extra table of a combined booking points to the main one.
+    const info = b ? (b.table_id === tb.id ? `${b.party_size}/${bookingSeats(b)}` : `+${tableById(b.table_id)?.label ?? ''}`)
+      : st.next ? hhmm(st.next.start_at) : `${tb.seats} ${t('seats_short')}`;
     return tableSvg(tb, 'st-' + st.state + (tb.id === S.selTable && wide() ? ' sel' : ''), [tb.label, info]);
   }).join('');
   const room = roomOf(lid, S.floor, items);
@@ -586,7 +600,7 @@ function viewMap() {
       <button class="ghost small" data-action="move-cancel">${t('cancel')}</button></div>` : ''}
     <div class="row wrap between toolbar">
       <div class="seg" role="tablist">${[1, 2].map((f) =>
-        `<button role="tab" aria-selected="${S.floor === f}" class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}</button>`).join('')}</div>
+        { const u = seatUse(f); return `<button role="tab" aria-selected="${S.floor === f}" class="${S.floor === f ? 'on' : ''}" data-action="floor" data-f="${f}">${t('floor')} ${f}<small class="seg-seats">${u.used}/${u.cap}</small></button>`; }).join('')}</div>
       ${wholeNight() ? '' : `<div class="timebar">
         ${ICON.clock}<span id="at-label" class="at-label">${atLabel()}</span>
         <input id="at-range" type="range" min="0" max="${slots.length - 1}" step="1" value="${atIndex()}" data-input="at" aria-label="${t('at_time')}">

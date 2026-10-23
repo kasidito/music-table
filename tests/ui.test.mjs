@@ -82,6 +82,9 @@ try {
   assert.ok((await cls('svg.floor [data-tid=T1]')).includes('st-late'));
   assert.match(await page.textContent('.stats-row'), /มาช้า/);
   assert.match(await page.textContent('.upcoming'), /สมชาย/);
+  assert.match(await page.textContent('svg.floor [data-tid=T1]'), /4\/4/, 'table shows guests/seats');
+  assert.match(await page.textContent('.stats-row'), /4\/14 ที่นั่ง/, 'night seats: 4 of 14');
+  assert.match(await page.textContent('[data-action=floor][data-f="1"]'), /4\/6/, 'floor 1 seats: 4 of 6');
   step('booking created; at 21:00 the 20:00 booking shows late on map, stats and arriving list');
 
   // Overlap + too many guests -> warning, then save anyway
