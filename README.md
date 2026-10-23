@@ -18,6 +18,14 @@ Staff-only table booking app for the bar. Web app (phone/tablet browser) + Supab
 3. **Publish the site**: GitHub repo → Settings → Pages → Source: "GitHub Actions". Every push to `main` deploys `app/`.
 4. Log in, open "แก้ผัง", build floor 1 and 2, then add staff in "พนักงาน".
 
+## Daily use
+
+- **Payment status** (booking sheet): one tap on ยังไม่จ่าย / รอโอน / มัดจำแล้ว / จ่ายครบ / จ่ายหน้างาน. Recording an amount or slip is optional; money recorded moves the status forward (never back).
+- **Customer types** (Settings → ประเภทลูกค้า / ส่วนลด): each can carry a discount %, taken off the table price. "ราคาที่ขายได้" on a booking overrides it.
+- **Booking length** (Settings): *whole night* (default) — a booking holds its table until closing; or *fixed length* for venues that turn tables.
+- **Concert report** (More → รีพอร์ตคอนเสิร์ต, or the button on a concert night's map): the bar's sheet layout, wristband ticks, Excel download (opens in Google Sheets).
+- Set drinks per table are edited in the layout editor data (`tables.set_note`).
+
 ## Good to know
 
 - Supabase free plan pauses a project after 1 week with no use. If the bar is closed that long, open the dashboard and restore it.
